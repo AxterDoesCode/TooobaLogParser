@@ -1,5 +1,5 @@
 import argparse
-from parselog import *
+from parselogNew import *
 
 def main():
     parser = argparse.ArgumentParser(description="Parse a log file and print totals.")
