@@ -190,7 +190,7 @@ class NonRVFILine(TimestampedLine):
 class CRqCreationLine(NonRVFILine):
     
     _TEST_REGEX = r"^\d+ L1D cRq creation"
-    _DATA_REGEX = r"^\d+ L1D cRq creation: mshr: (\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+),pcHash: (0x[0-9a-f]+), mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), isRetry: ([01]), reqCs: ([ITSEM]), op: (Ld|St|Lr|Sc|Amo)"
+    _DATA_REGEX = r"^\d+ L1D cRq creation: mshr: (\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+), pcHash: (0x[0-9a-f]+), mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), isRetry: ([01]), reqCs: ([ITSEM]), op: (Ld|St|Lr|Sc|Amo)"
 
     # How many cycles in the future to expect a cRq response
     MAX_CRQ_RESP_CYCLES = 30
@@ -236,15 +236,15 @@ class CRqCreationLine(NonRVFILine):
         self.mshr         = int(reData[0])
         self.addr         = int(reData[1], 0)
         self.lineAddr     = self.addr >> 6
-        self.vpn          = int(reData[3], 0)
-        self.pcHash       = int(reData[4], 0)
-        self.mshrUsed     = int(reData[5])
-        self.totalMshr    = int(reData[6])
-        self.isPrefetch   = int(reData[7] == "1")
+        self.vpn          = int(reData[2], 0)
+        self.pcHash       = int(reData[3], 0)
+        self.mshrUsed     = int(reData[4])
+        self.totalMshr    = int(reData[5])
+        self.isPrefetch   = int(reData[6] == "1")
         self.isDemand     = not self.isPrefetch
-        self.isRetry      = int(reData[8] == "1")
-        self.reqCs        = str(reData[9])
-        self.op           = str(reData[10])
+        self.isRetry      = int(reData[7] == "1")
+        self.reqCs        = str(reData[8])
+        self.op           = str(reData[9])
         # Will be set in self.postProcess
         self.hit    = False
         self.miss   = False
@@ -379,10 +379,11 @@ class CRqCreationLine(NonRVFILine):
             "demandOwned"  : int(not self.isPrefetch and self.owned),
             "demandQueued" : int(not self.isPrefetch and self.queued),
 
-            "demandMissToLDS"   : int(not self.isPrefetch and self.miss and self.boundsLength <= 1024),
-            "demandMissLoadToLDS" : int(not self.isPrefetch and self.miss and self.op == "Ld" and self.boundsLength <= 1024),
-            "demandMissLLToLDS"   : int(not self.isPrefetch and self.miss and not self.cRqResponseLine.hitInLL and self.boundsLength <= 1024),
-            "demandMissLLLoadToLDS"   : int(not self.isPrefetch and self.miss and not self.cRqResponseLine.hitInLL and self.op == "Ld" and self.boundsLength <= 1024),
+            # This seems to be stuff that detected misses to Linked Data Structures
+            # "demandMissToLDS"   : int(not self.isPrefetch and self.miss and self.boundsLength <= 1024),
+            # "demandMissLoadToLDS" : int(not self.isPrefetch and self.miss and self.op == "Ld" and self.boundsLength <= 1024),
+            # "demandMissLLToLDS"   : int(not self.isPrefetch and self.miss and not self.cRqResponseLine.hitInLL and self.boundsLength <= 1024),
+            # "demandMissLLLoadToLDS"   : int(not self.isPrefetch and self.miss and not self.cRqResponseLine.hitInLL and self.op == "Ld" and self.boundsLength <= 1024),
 
             "prefetch"       : int(self.isPrefetch),
             "prefetchHit"    : int(self.isPrefetch and self.hit),
@@ -430,7 +431,7 @@ class CRqCreationLine(NonRVFILine):
 class LLCRqCreationLine(NonRVFILine):
     
     _TEST_REGEX = r"^\d+ LL cRq creation"
-    _DATA_REGEX = r"^\d+ LL cRq creation: mshr: \s*(\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+),mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), wasQueued: ([01]), reqCs: ([ITSEM])"
+    _DATA_REGEX = r"^\d+ LL cRq creation: mshr: \s*(\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+), mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), wasQueued: ([01]), reqCs: ([ITSEM])"
     
     # Max cycles to search for a cache hit
     MAX_HIT_CYCLES = 500
@@ -557,7 +558,7 @@ class LLCRqCreationLine(NonRVFILine):
 class CRqHitLine(NonRVFILine):
 
     _TEST_REGEX = r"^\d+ L1D cRq hit"
-    _DATA_REGEX = r"^\d+ L1D cRq hit: mshr: \s*(\d+), addr: (0x[0-9a-f]+), cRq is prefetch: ([01]), wasMiss: ([01]), pipeCs: ([ITSEM]), reqCs: ([ITSEM]), saveCs: ([ITSEM]), op: (Ld|St|Lr|Sc|Amo), nCap: (\d), data: (.*)"
+    _DATA_REGEX = r"^\d+ L1D cRq hit: mshr: \s*(\d+), addr: (0x[0-9a-f]+), cRq is prefetch: ([01]), wasMiss: ([01]), pipeCs: ([ITSEM]), reqCs: ([ITSEM]), saveCs: ([ITSEM]), op: (Ld|St|Lr|Sc|Amo), data: (.*)"
 
     # Lookout for the eviction of this cache line
     # Means we can know prefetch accuracy and the lifetime of cache lines
@@ -639,7 +640,9 @@ class CRqHitLine(NonRVFILine):
     def getTotals(self):
         rt = super().getTotals()
         return rt if self.discard else rt | {
-            "demandAccessedCap": (self.cRqCreationLine is not None and not self.cRqIsPrefetch and self.op == "Ld" and self.addr % 16 == 0 and self.hitDataLine.tag and self.cRqCreationLine.boundsLength >= 16)
+            "demandAccesses": (self.cRqCreationLine is not None and not self.cRqIsPrefetch and self.op == "Ld" and self.addr % 16 == 0)
+            # AlexNote: previously in CHERI ver we could see if the demand access was against a capability, of course this isn't possible now
+            #"demandAccessCap": (self.cRqCreationLine is not None and not self.cRqIsPrefetch and self.op == "Ld" and self.addr % 16 == 0 and self.hitDataLine.tag and self.cRqCreationLine.boundsLength >= 16)
         }
 
     def getDistributions(self):
@@ -658,22 +661,21 @@ class CRqHitLine(NonRVFILine):
         #     rt["demandCapSizeForSensibleCapLoad"] = self.cRqCreationLine.boundsLength
         if self.wasMiss and self.evictionLine is not None:
             rt["evictionCycles"] = self.evictionLine.timestamp - self.timestamp
-        if self.wasMiss and self.evictionLine is not None and self.cRqCreationLine is not None and self.cRqCreationLine.boundsLength <= 512:
-            rt["smallCapEvictionCycles"] = self.evictionLine.timestamp - self.timestamp
+        # if self.wasMiss and self.evictionLine is not None and self.cRqCreationLine is not None and self.cRqCreationLine.boundsLength <= 512:
+        #     rt["smallCapEvictionCycles"] = self.evictionLine.timestamp - self.timestamp
         return rt
 
 @NonRVFILine.createSubLineType
 class CRqHitDataLine(NonRVFILine):
 
     _TEST_REGEX = r"^\d+ L1Bank hit data:"
-    _DATA_REGEX = r"^\d+ L1Bank hit data: TaggedData { tag: (True|False), data: <V 'h([0-9a-f]+) 'h([0-9a-f]+)  > }"
+    # _DATA_REGEX = r"^\d+ L1Bank hit data: TaggedData { tag: (True|False), data: <V 'h([0-9a-f]+) 'h([0-9a-f]+)  > }"
+    _DATA_REGEX = r"^\d+ L1Bank hit data: 'h([0-9a-f]+)"
 
     def __init__(self, line: str):
         super().__init__(line)
         reData = CRqHitDataLine.dataRegex(line)
-        self.tag           = bool(reData[0] == "True")
-        self.data0         = int(reData[1], 16)
-        self.data1         = int(reData[2], 16)
+        self.data0 = int(reData[0], 16)
 
 @NonRVFILine.createSubLineType
 class LLCRqHitLine(NonRVFILine):
@@ -718,7 +720,7 @@ class LLCRqHitLine(NonRVFILine):
 
         # If this was a demand hit, check whether there was a previous prefetch for this line
         # If so, set its lead time
-        if not self.cRqIsPrefetch and self.linesdsd<F5>Addr in self.PREFETCH_LOOKOUTS:
+        if not self.cRqIsPrefetch and self.lineAddr in self.PREFETCH_LOOKOUTS:
             if not self.warnIf(self.wasMiss, "LLCRqHitLine.PREFETCH_LOOKOUTS hit on a cRq miss"):
                 ll = self.PREFETCH_LOOKOUTS[self.lineAddr]
                 if ll.prefetchLeadTime is None:
@@ -731,8 +733,8 @@ class LLCRqHitLine(NonRVFILine):
         rt = {}
         if self.wasMiss and self.evictionLine is not None:
             rt["evictionCycles"] = self.evictionLine.timestamp - self.timestamp
-        if self.wasMiss and self.evictionLine is not None and self.cRqCreationLine is not None and self.cRqCreationLine.boundsLength <= 512:
-            rt["smallCapEvictionCycles"] = self.evictionLine.timestamp - self.timestamp
+        # if self.wasMiss and self.evictionLine is not None and self.cRqCreationLine is not None and self.cRqCreationLine.boundsLength <= 512:
+        #     rt["smallCapEvictionCycles"] = self.evictionLine.timestamp - self.timestamp
         return rt
 
 @NonRVFILine.createSubLineType
@@ -1121,6 +1123,7 @@ class LogParser:
         self.logLines: deque[LogLine] = deque()
         self.lineTypeCounts: dict[type[LogLine], int] = {}
         started = startWhen == None
+        started = True
 
         # Load relevant log lines into self.logLines
         # Skip any line types in lineTypesToPrune
@@ -1141,12 +1144,14 @@ class LogParser:
                 # Instantiate the line type
                 try:
                     logLine = LineType(line)
+                    # print("LineType instantiated", LineType)
                 except Exception as e:
                     raise type(e)(f"Failed to load '{log}': {e}")
                 # Check if we need to skip this line because we haven't started
                 started = started or startWhen(logLine)
                 if not started: continue
                 # Save the line to logLines
+                # print("Saved line")
                 self.logLines.append(logLine)
                 self.lineTypeCounts[LineType] = self.lineTypeCounts.get(LineType, 0) + 1
                 # Check we haven't recorded maxLines log lines

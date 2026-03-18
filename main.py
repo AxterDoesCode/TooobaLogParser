@@ -8,7 +8,8 @@ def main():
 
     lp = LogParser(
         log=args.logfile,
-        lineTypesToPrune=[None, NonRVFILine],
+        # lineTypesToPrune=[None, NonRVFILine],
+        lineTypesToPrune=[None],
         # If a timestamped line matches, then either RVFILine or NonRVFILine will match
         lineTypesToError=[TimestampedLine],
         RootLogLine=TimestampedLine,
