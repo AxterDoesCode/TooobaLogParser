@@ -8,17 +8,19 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0d1117;
-      --surface:  #161b22;
-      --border:   #30363d;
-      --text:     #c9d1d9;
-      --muted:    #6e7681;
-      --accent:   #58a6ff;
-      --green:    #3fb950;
-      --yellow:   #d29922;
-      --red:      #f85149;
-      --diff-hi:  rgba(88, 166, 255, 0.12);
-      --head-bg:  #21262d;
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --text:      #c9d1d9;
+      --muted:     #6e7681;
+      --accent:    #58a6ff;
+      --green:     #3fb950;
+      --yellow:    #d29922;
+      --red:       #f85149;
+      --diff-hi:   rgba(210, 153, 34, 0.13);
+      --head-bg:   #21262d;
+      --sidebar-w: 280px;
     }
 
     body {
@@ -26,27 +28,130 @@
       font-size: 13px;
       background: var(--bg);
       color: var(--text);
-      min-height: 100vh;
+      height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
+    /* ── Header ── */
     header {
-      padding: 16px 24px;
+      padding: 12px 20px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 12px;
+      flex-shrink: 0;
     }
-    header h1 { font-size: 15px; font-weight: 600; color: var(--text); }
+    header h1 { font-size: 14px; font-weight: 600; }
     header span { color: var(--muted); font-size: 12px; }
 
+    /* ── Body layout: sidebar + main ── */
+    #body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    #sidebar-header {
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    #sidebar-header span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    #refresh-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+      line-height: 1;
+    }
+    #refresh-btn:hover { color: var(--accent); }
+
+    #sidebar-scroll { flex: 1; overflow-y: auto; padding: 6px 0; }
+
+    .cpu-group { }
+    .cpu-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      cursor: pointer;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      user-select: none;
+    }
+    .cpu-label:hover { background: rgba(255,255,255,0.04); }
+    .cpu-label .arrow { font-size: 10px; color: var(--muted); transition: transform 0.15s; }
+    .cpu-label.collapsed .arrow { transform: rotate(-90deg); }
+
+    .cpu-files { }
+    .cpu-label.collapsed + .cpu-files { display: none; }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 14px 4px 28px;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .file-item:hover { background: rgba(255,255,255,0.05); }
+    .file-item.active { color: var(--accent); background: rgba(88,166,255,0.1); }
+    .file-item .cached-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+      title: "cached";
+    }
+    .file-item .no-dot { width: 6px; flex-shrink: 0; }
+
+    #sidebar-empty {
+      padding: 20px 14px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    /* ── Main area ── */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* add bar */
     #add-bar {
       display: flex;
       gap: 8px;
-      padding: 14px 24px;
+      padding: 10px 16px;
       border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      background: var(--surface2);
+      flex-shrink: 0;
     }
     #add-bar input {
       flex: 1;
@@ -54,135 +159,111 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text);
-      padding: 6px 10px;
+      padding: 5px 10px;
       font-family: inherit;
-      font-size: 13px;
+      font-size: 12px;
       outline: none;
     }
     #add-bar input:focus { border-color: var(--accent); }
     #add-bar input::placeholder { color: var(--muted); }
 
-    button {
+    button.primary {
       background: var(--accent);
       color: #0d1117;
       border: none;
       border-radius: 6px;
-      padding: 6px 14px;
+      padding: 5px 14px;
       font-family: inherit;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
     }
-    button:hover { filter: brightness(1.1); }
-    button.ghost {
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      font-weight: 400;
-    }
-    button.ghost:hover { color: var(--red); border-color: var(--red); }
+    button.primary:hover { filter: brightness(1.1); }
+    button.primary:disabled { opacity: 0.5; cursor: default; filter: none; }
 
     #status-bar {
-      padding: 6px 24px;
-      font-size: 12px;
+      padding: 4px 16px;
+      font-size: 11px;
       color: var(--muted);
-      min-height: 26px;
+      min-height: 22px;
+      flex-shrink: 0;
     }
     #status-bar.error { color: var(--red); }
     #status-bar.ok    { color: var(--green); }
 
-    #main {
+    /* table area */
+    #table-wrap {
       flex: 1;
       overflow: auto;
-      padding: 0 24px 32px;
+      padding: 0 16px 32px;
     }
-
-    /* ── Comparison table ── */
-    #table-wrap { overflow-x: auto; margin-top: 16px; }
 
     table {
       border-collapse: collapse;
-      width: 100%;
       min-width: max-content;
+      width: 100%;
+      margin-top: 12px;
     }
 
     thead th {
       background: var(--head-bg);
       border: 1px solid var(--border);
-      padding: 8px 14px;
+      padding: 7px 14px;
       text-align: left;
       position: sticky;
       top: 0;
       z-index: 2;
       white-space: nowrap;
     }
-    thead th.stat-col { min-width: 260px; color: var(--muted); font-weight: 400; }
-    thead th.log-col  { min-width: 160px; }
+    thead th.stat-col { min-width: 240px; color: var(--muted); font-weight: 400; font-size: 11px; }
+    thead th.log-col  { min-width: 150px; }
 
-    .log-header {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .log-header .log-name { color: var(--accent); font-weight: 600; font-size: 12px; word-break: break-all; }
-    .log-header .log-meta { color: var(--muted); font-size: 11px; }
+    .log-header { display: flex; flex-direction: column; gap: 2px; }
+    .log-header .log-name { color: var(--accent); font-weight: 600; font-size: 12px; }
+    .log-header .log-dir  { color: var(--muted); font-size: 10px; }
 
+    .th-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
     .remove-btn {
-      background: transparent;
-      border: none;
-      color: var(--muted);
-      cursor: pointer;
-      font-size: 14px;
-      padding: 0 0 0 6px;
-      line-height: 1;
-      vertical-align: middle;
+      background: transparent; border: none;
+      color: var(--muted); cursor: pointer;
+      font-size: 12px; padding: 0; line-height: 1; flex-shrink: 0;
     }
-    .remove-btn:hover { color: var(--red); filter: none; }
+    .remove-btn:hover { color: var(--red); }
 
     tbody tr { border-bottom: 1px solid var(--border); }
     tbody tr:hover td { background: rgba(255,255,255,0.02); }
 
-    td {
-      border-left: 1px solid var(--border);
-      padding: 5px 14px;
-      white-space: nowrap;
-    }
+    td { border-left: 1px solid var(--border); padding: 4px 14px; white-space: nowrap; }
 
-    /* section header rows */
     tr.section-header td {
       background: var(--head-bg);
       color: var(--accent);
       font-weight: 600;
-      font-size: 12px;
-      padding: 6px 14px;
-      letter-spacing: 0.04em;
+      font-size: 11px;
+      padding: 5px 14px;
+      letter-spacing: 0.05em;
     }
 
-    td.stat-name { color: var(--muted); padding-left: 28px; }
+    td.stat-name { color: var(--muted); padding-left: 26px; font-size: 12px; }
     td.val       { text-align: right; font-variant-numeric: tabular-nums; }
     td.val.diff  { background: var(--diff-hi); color: var(--yellow); }
     td.val.zero  { color: var(--muted); }
     td.missing   { text-align: right; color: var(--muted); }
 
-    /* processing spinner */
-    .spinner {
-      display: inline-block;
-      width: 10px; height: 10px;
-      border: 2px solid var(--muted);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      vertical-align: middle;
-      margin-right: 4px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
     #empty-msg {
       color: var(--muted);
-      padding: 48px 0;
+      padding: 60px 0;
       text-align: center;
       font-size: 13px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block; width: 9px; height: 9px;
+      border: 2px solid var(--muted); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 4px;
     }
   </style>
 </head>
@@ -193,36 +274,53 @@
   <span>RISC-V core log comparison</span>
 </header>
 
-<div id="add-bar">
-  <input id="path-input" type="text" placeholder="Absolute path to log file (e.g. /path/to/sim.log or sim.log.gz)" />
-  <button id="add-btn">Add Log</button>
-</div>
+<div id="body">
 
-<div id="status-bar"></div>
-
-<div id="main">
-  <div id="empty-msg">Add log files above to begin comparison.</div>
-  <div id="table-wrap" style="display:none">
-    <table id="cmp-table">
-      <thead><tr id="thead-row"><th class="stat-col">Stat</th></tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>Log Browser</span>
+      <button id="refresh-btn" title="Refresh">↺</button>
+    </div>
+    <div id="sidebar-scroll">
+      <div id="sidebar-empty"></div>
+    </div>
   </div>
+
+  <!-- ── Main ── -->
+  <div id="main">
+    <div id="add-bar">
+      <input id="path-input" type="text" placeholder="Or type an absolute path to a log file and press Enter…" />
+      <button class="primary" id="add-btn">Add</button>
+    </div>
+    <div id="status-bar"></div>
+
+    <div id="table-wrap">
+      <div id="empty-msg">Select log files from the browser on the left, or type a path above.</div>
+      <table id="cmp-table" style="display:none">
+        <thead><tr id="thead-row"><th class="stat-col">Stat</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
 </div>
 
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
-// logs: Array<{ path, label, totals, cached }>
-const logs = [];
+const logs = []; // Array<{ path, name, dir, totals, cached }>
 
-// ── DOM refs ───────────────────────────────────────────────────────────────
-const pathInput  = document.getElementById("path-input");
-const addBtn     = document.getElementById("add-btn");
-const statusBar  = document.getElementById("status-bar");
-const emptyMsg   = document.getElementById("empty-msg");
-const tableWrap  = document.getElementById("table-wrap");
-const theadRow   = document.getElementById("thead-row");
-const tbody      = document.getElementById("tbody");
+// ── DOM ────────────────────────────────────────────────────────────────────
+const pathInput   = document.getElementById("path-input");
+const addBtn      = document.getElementById("add-btn");
+const statusBar   = document.getElementById("status-bar");
+const emptyMsg    = document.getElementById("empty-msg");
+const cmpTable    = document.getElementById("cmp-table");
+const theadRow    = document.getElementById("thead-row");
+const tbody       = document.getElementById("tbody");
+const sidebarScroll = document.getElementById("sidebar-scroll");
+const sidebarEmpty  = document.getElementById("sidebar-empty");
+const refreshBtn  = document.getElementById("refresh-btn");
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function setStatus(msg, cls = "") {
@@ -230,23 +328,104 @@ function setStatus(msg, cls = "") {
   statusBar.className = cls;
 }
 
-function basename(p) {
-  return p.split("/").filter(Boolean).at(-1) || p;
+function basename(p) { return p.split("/").filter(Boolean).at(-1) || p; }
+function dirname(p)  { const parts = p.split("/").filter(Boolean); parts.pop(); return "/" + parts.join("/"); }
+function escHtml(s)  { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escAttr(s)  { return s.replace(/"/g,"&quot;"); }
+function fmtNum(n)   { return Number(n).toLocaleString(); }
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+async function loadBrowser() {
+  sidebarEmpty.textContent = "Loading…";
+  try {
+    const resp = await fetch("/api/browse");
+    const data = await resp.json();
+    if (data.error) {
+      sidebarEmpty.innerHTML = escHtml(data.error);
+      return;
+    }
+    renderBrowser(data);
+  } catch (e) {
+    sidebarEmpty.textContent = `Error: ${e.message}`;
+  }
 }
 
-function fmtNum(n) {
-  return n.toLocaleString();
-}
+function renderBrowser(data) {
+  sidebarEmpty.innerHTML = "";
 
-// ── Add log ────────────────────────────────────────────────────────────────
-async function addLog(path) {
-  if (!path) return;
-  if (logs.find(l => l.path === path)) {
-    setStatus(`Already loaded: ${path}`, "error");
+  if (data.dirs.length === 0) {
+    sidebarEmpty.textContent = `No subdirectories found in ${data.root}`;
     return;
   }
 
-  setStatus(`\u29D7 Processing ${basename(path)}…`);
+  data.dirs.forEach(dir => {
+    const group = document.createElement("div");
+    group.className = "cpu-group";
+
+    const label = document.createElement("div");
+    label.className = "cpu-label";
+    label.dataset.dir = dir.name;
+    label.innerHTML = `<span class="arrow">▾</span>${escHtml(dir.name)}`;
+    label.addEventListener("click", () => label.classList.toggle("collapsed"));
+
+    const fileList = document.createElement("div");
+    fileList.className = "cpu-files";
+
+    if (dir.files.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "file-item";
+      empty.style.color = "var(--muted)";
+      empty.textContent = "(no files)";
+      fileList.appendChild(empty);
+    } else {
+      dir.files.forEach(file => {
+        const item = document.createElement("div");
+        item.className = "file-item";
+        item.dataset.path = file.path;
+        item.title = file.path;
+        if (logs.find(l => l.path === file.path)) item.classList.add("active");
+
+        const dot = document.createElement("span");
+        dot.className = file.cached ? "cached-dot" : "no-dot";
+        if (file.cached) dot.title = "Cached";
+
+        const name = document.createElement("span");
+        name.textContent = file.name;
+
+        item.appendChild(dot);
+        item.appendChild(name);
+        item.addEventListener("click", () => {
+          if (logs.find(l => l.path === file.path)) {
+            removeLog(file.path);
+          } else {
+            addLog(file.path);
+          }
+        });
+        fileList.appendChild(item);
+      });
+    }
+
+    group.appendChild(label);
+    group.appendChild(fileList);
+    sidebarEmpty.appendChild(group);
+  });
+}
+
+function updateSidebarActive() {
+  document.querySelectorAll(".file-item[data-path]").forEach(el => {
+    el.classList.toggle("active", !!logs.find(l => l.path === el.dataset.path));
+  });
+}
+
+// ── Add / Remove log ───────────────────────────────────────────────────────
+async function addLog(path) {
+  if (!path) return;
+  if (logs.find(l => l.path === path)) {
+    setStatus(`Already loaded: ${basename(path)}`, "error");
+    return;
+  }
+
+  setStatus(`Processing ${basename(path)}…`);
   addBtn.disabled = true;
 
   let resp, data;
@@ -270,64 +449,71 @@ async function addLog(path) {
     return;
   }
 
-  logs.push({ path, label: basename(path), totals: data.totals, cached: data.cached });
+  logs.push({
+    path,
+    name: basename(path),
+    dir:  basename(dirname(path)),
+    totals: data.totals,
+    cached: data.cached,
+  });
+
   setStatus(`Loaded ${basename(path)}${data.cached ? " (cached)" : ""}`, "ok");
   renderTable();
+  updateSidebarActive();
+
+  // Mark the sidebar dot as cached now
+  const item = document.querySelector(`.file-item[data-path="${escAttr(path)}"] .no-dot`);
+  if (item) { item.className = "cached-dot"; item.title = "Cached"; }
 }
 
-// ── Remove log ─────────────────────────────────────────────────────────────
 function removeLog(path) {
   const idx = logs.findIndex(l => l.path === path);
   if (idx !== -1) logs.splice(idx, 1);
   renderTable();
+  updateSidebarActive();
   setStatus(logs.length === 0 ? "" : `Removed ${basename(path)}`);
 }
 
-// ── Render ─────────────────────────────────────────────────────────────────
+// ── Table ──────────────────────────────────────────────────────────────────
 function renderTable() {
   theadRow.innerHTML = '<th class="stat-col">Stat</th>';
   tbody.innerHTML = "";
 
   if (logs.length === 0) {
     emptyMsg.style.display = "";
-    tableWrap.style.display = "none";
+    cmpTable.style.display = "none";
     return;
   }
   emptyMsg.style.display = "none";
-  tableWrap.style.display = "";
+  cmpTable.style.display = "";
 
-  // Build column headers
   logs.forEach(log => {
     const th = document.createElement("th");
     th.className = "log-col";
     th.innerHTML = `
-      <div class="log-header">
-        <span class="log-name">${escHtml(log.label)}<button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button></span>
-        <span class="log-meta">${escHtml(log.path)}</span>
+      <div class="th-inner">
+        <div class="log-header">
+          <span class="log-name">${escHtml(log.name)}</span>
+          <span class="log-dir">${escHtml(log.dir)}</span>
+        </div>
+        <button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button>
       </div>`;
     theadRow.appendChild(th);
   });
 
-  // Collect all LineTypes (preserving first-seen order)
-  const lineTypeOrder = [];
-  const lineTypeSeen = new Set();
-  logs.forEach(log => {
-    Object.keys(log.totals).forEach(lt => {
-      if (!lineTypeSeen.has(lt)) { lineTypeOrder.push(lt); lineTypeSeen.add(lt); }
-    });
-  });
+  // Collect LineTypes in order
+  const ltOrder = [], ltSeen = new Set();
+  logs.forEach(log => Object.keys(log.totals).forEach(lt => {
+    if (!ltSeen.has(lt)) { ltOrder.push(lt); ltSeen.add(lt); }
+  }));
 
-  // Collect all stat keys per LineType
-  lineTypeOrder.forEach(lt => {
-    const statKeys = [];
-    const statSeen = new Set();
-    logs.forEach(log => {
-      Object.keys(log.totals[lt] || {}).forEach(k => {
-        if (!statSeen.has(k)) { statKeys.push(k); statSeen.add(k); }
-      });
-    });
+  ltOrder.forEach(lt => {
+    const statKeys = [], statSeen = new Set();
+    logs.forEach(log => Object.keys(log.totals[lt] || {}).forEach(k => {
+      if (!statSeen.has(k)) { statKeys.push(k); statSeen.add(k); }
+    }));
 
-    // Section header row
+    // Section header
     const secRow = document.createElement("tr");
     secRow.className = "section-header";
     const secTd = document.createElement("td");
@@ -336,7 +522,6 @@ function renderTable() {
     secRow.appendChild(secTd);
     tbody.appendChild(secRow);
 
-    // One row per stat key
     statKeys.forEach(key => {
       const values = logs.map(log => (log.totals[lt] || {})[key]);
       const defined = values.filter(v => v !== undefined);
@@ -344,7 +529,6 @@ function renderTable() {
       const isDiff  = !allSame || values.some(v => v === undefined);
 
       const tr = document.createElement("tr");
-
       const nameTd = document.createElement("td");
       nameTd.className = "stat-name";
       nameTd.textContent = key;
@@ -352,11 +536,11 @@ function renderTable() {
 
       values.forEach(v => {
         const td = document.createElement("td");
-        td.className = "val";
         if (v === undefined) {
           td.className = "missing";
           td.textContent = "—";
         } else {
+          td.className = "val";
           if (isDiff) td.classList.add("diff");
           if (v === 0) td.classList.add("zero");
           td.textContent = fmtNum(v);
@@ -369,19 +553,9 @@ function renderTable() {
   });
 
   // Wire remove buttons
-  tbody.querySelectorAll(".remove-btn").forEach(btn => {
-    btn.addEventListener("click", () => removeLog(btn.dataset.path));
-  });
   theadRow.querySelectorAll(".remove-btn").forEach(btn => {
     btn.addEventListener("click", () => removeLog(btn.dataset.path));
   });
-}
-
-function escHtml(s) {
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-}
-function escAttr(s) {
-  return s.replace(/"/g, "&quot;");
 }
 
 // ── Event listeners ────────────────────────────────────────────────────────
@@ -394,6 +568,14 @@ addBtn.addEventListener("click", () => {
 pathInput.addEventListener("keydown", e => {
   if (e.key === "Enter") addBtn.click();
 });
+
+refreshBtn.addEventListener("click", () => {
+  sidebarEmpty.innerHTML = "";
+  loadBrowser();
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadBrowser();
 </script>
 </body>
 </html>
