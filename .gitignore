@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Log caches
+*.totals_cache
+*.webapp_cache.json
+
+# Logs themselves (likely large)
+*.log
+*.log.gz

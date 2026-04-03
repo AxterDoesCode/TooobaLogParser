@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log Parser</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --text:     #c9d1d9;
+      --muted:    #6e7681;
+      --accent:   #58a6ff;
+      --green:    #3fb950;
+      --yellow:   #d29922;
+      --red:      #f85149;
+      --diff-hi:  rgba(88, 166, 255, 0.12);
+      --head-bg:  #21262d;
+    }
+
+    body {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 15px; font-weight: 600; color: var(--text); }
+    header span { color: var(--muted); font-size: 12px; }
+
+    #add-bar {
+      display: flex;
+      gap: 8px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    #add-bar input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 6px 10px;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    #add-bar input:focus { border-color: var(--accent); }
+    #add-bar input::placeholder { color: var(--muted); }
+
+    button {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover { filter: brightness(1.1); }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-weight: 400;
+    }
+    button.ghost:hover { color: var(--red); border-color: var(--red); }
+
+    #status-bar {
+      padding: 6px 24px;
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 26px;
+    }
+    #status-bar.error { color: var(--red); }
+    #status-bar.ok    { color: var(--green); }
+
+    #main {
+      flex: 1;
+      overflow: auto;
+      padding: 0 24px 32px;
+    }
+
+    /* ── Comparison table ── */
+    #table-wrap { overflow-x: auto; margin-top: 16px; }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: max-content;
+    }
+
+    thead th {
+      background: var(--head-bg);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      text-align: left;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      white-space: nowrap;
+    }
+    thead th.stat-col { min-width: 260px; color: var(--muted); font-weight: 400; }
+    thead th.log-col  { min-width: 160px; }
+
+    .log-header {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .log-header .log-name { color: var(--accent); font-weight: 600; font-size: 12px; word-break: break-all; }
+    .log-header .log-meta { color: var(--muted); font-size: 11px; }
+
+    .remove-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 0 0 6px;
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .remove-btn:hover { color: var(--red); filter: none; }
+
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:hover td { background: rgba(255,255,255,0.02); }
+
+    td {
+      border-left: 1px solid var(--border);
+      padding: 5px 14px;
+      white-space: nowrap;
+    }
+
+    /* section header rows */
+    tr.section-header td {
+      background: var(--head-bg);
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 6px 14px;
+      letter-spacing: 0.04em;
+    }
+
+    td.stat-name { color: var(--muted); padding-left: 28px; }
+    td.val       { text-align: right; font-variant-numeric: tabular-nums; }
+    td.val.diff  { background: var(--diff-hi); color: var(--yellow); }
+    td.val.zero  { color: var(--muted); }
+    td.missing   { text-align: right; color: var(--muted); }
+
+    /* processing spinner */
+    .spinner {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border: 2px solid var(--muted);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #empty-msg {
+      color: var(--muted);
+      padding: 48px 0;
+      text-align: center;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Log Parser</h1>
+  <span>RISC-V core log comparison</span>
+</header>
+
+<div id="add-bar">
+  <input id="path-input" type="text" placeholder="Absolute path to log file (e.g. /path/to/sim.log or sim.log.gz)" />
+  <button id="add-btn">Add Log</button>
+</div>
+
+<div id="status-bar"></div>
+
+<div id="main">
+  <div id="empty-msg">Add log files above to begin comparison.</div>
+  <div id="table-wrap" style="display:none">
+    <table id="cmp-table">
+      <thead><tr id="thead-row"><th class="stat-col">Stat</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+// logs: Array<{ path, label, totals, cached }>
+const logs = [];
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const pathInput  = document.getElementById("path-input");
+const addBtn     = document.getElementById("add-btn");
+const statusBar  = document.getElementById("status-bar");
+const emptyMsg   = document.getElementById("empty-msg");
+const tableWrap  = document.getElementById("table-wrap");
+const theadRow   = document.getElementById("thead-row");
+const tbody      = document.getElementById("tbody");
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function setStatus(msg, cls = "") {
+  statusBar.textContent = msg;
+  statusBar.className = cls;
+}
+
+function basename(p) {
+  return p.split("/").filter(Boolean).at(-1) || p;
+}
+
+function fmtNum(n) {
+  return n.toLocaleString();
+}
+
+// ── Add log ────────────────────────────────────────────────────────────────
+async function addLog(path) {
+  if (!path) return;
+  if (logs.find(l => l.path === path)) {
+    setStatus(`Already loaded: ${path}`, "error");
+    return;
+  }
+
+  setStatus(`\u29D7 Processing ${basename(path)}…`);
+  addBtn.disabled = true;
+
+  let resp, data;
+  try {
+    resp = await fetch("/api/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    data = await resp.json();
+  } catch (e) {
+    setStatus(`Network error: ${e.message}`, "error");
+    addBtn.disabled = false;
+    return;
+  }
+
+  addBtn.disabled = false;
+
+  if (!resp.ok || data.error) {
+    setStatus(`Error: ${data.error || resp.statusText}`, "error");
+    return;
+  }
+
+  logs.push({ path, label: basename(path), totals: data.totals, cached: data.cached });
+  setStatus(`Loaded ${basename(path)}${data.cached ? " (cached)" : ""}`, "ok");
+  renderTable();
+}
+
+// ── Remove log ─────────────────────────────────────────────────────────────
+function removeLog(path) {
+  const idx = logs.findIndex(l => l.path === path);
+  if (idx !== -1) logs.splice(idx, 1);
+  renderTable();
+  setStatus(logs.length === 0 ? "" : `Removed ${basename(path)}`);
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderTable() {
+  theadRow.innerHTML = '<th class="stat-col">Stat</th>';
+  tbody.innerHTML = "";
+
+  if (logs.length === 0) {
+    emptyMsg.style.display = "";
+    tableWrap.style.display = "none";
+    return;
+  }
+  emptyMsg.style.display = "none";
+  tableWrap.style.display = "";
+
+  // Build column headers
+  logs.forEach(log => {
+    const th = document.createElement("th");
+    th.className = "log-col";
+    th.innerHTML = `
+      <div class="log-header">
+        <span class="log-name">${escHtml(log.label)}<button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button></span>
+        <span class="log-meta">${escHtml(log.path)}</span>
+      </div>`;
+    theadRow.appendChild(th);
+  });
+
+  // Collect all LineTypes (preserving first-seen order)
+  const lineTypeOrder = [];
+  const lineTypeSeen = new Set();
+  logs.forEach(log => {
+    Object.keys(log.totals).forEach(lt => {
+      if (!lineTypeSeen.has(lt)) { lineTypeOrder.push(lt); lineTypeSeen.add(lt); }
+    });
+  });
+
+  // Collect all stat keys per LineType
+  lineTypeOrder.forEach(lt => {
+    const statKeys = [];
+    const statSeen = new Set();
+    logs.forEach(log => {
+      Object.keys(log.totals[lt] || {}).forEach(k => {
+        if (!statSeen.has(k)) { statKeys.push(k); statSeen.add(k); }
+      });
+    });
+
+    // Section header row
+    const secRow = document.createElement("tr");
+    secRow.className = "section-header";
+    const secTd = document.createElement("td");
+    secTd.colSpan = 1 + logs.length;
+    secTd.textContent = lt;
+    secRow.appendChild(secTd);
+    tbody.appendChild(secRow);
+
+    // One row per stat key
+    statKeys.forEach(key => {
+      const values = logs.map(log => (log.totals[lt] || {})[key]);
+      const defined = values.filter(v => v !== undefined);
+      const allSame = defined.length > 0 && defined.every(v => v === defined[0]);
+      const isDiff  = !allSame || values.some(v => v === undefined);
+
+      const tr = document.createElement("tr");
+
+      const nameTd = document.createElement("td");
+      nameTd.className = "stat-name";
+      nameTd.textContent = key;
+      tr.appendChild(nameTd);
+
+      values.forEach(v => {
+        const td = document.createElement("td");
+        td.className = "val";
+        if (v === undefined) {
+          td.className = "missing";
+          td.textContent = "—";
+        } else {
+          if (isDiff) td.classList.add("diff");
+          if (v === 0) td.classList.add("zero");
+          td.textContent = fmtNum(v);
+        }
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  // Wire remove buttons
+  tbody.querySelectorAll(".remove-btn").forEach(btn => {
+    btn.addEventListener("click", () => removeLog(btn.dataset.path));
+  });
+  theadRow.querySelectorAll(".remove-btn").forEach(btn => {
+    btn.addEventListener("click", () => removeLog(btn.dataset.path));
+  });
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function escAttr(s) {
+  return s.replace(/"/g, "&quot;");
+}
+
+// ── Event listeners ────────────────────────────────────────────────────────
+addBtn.addEventListener("click", () => {
+  const p = pathInput.value.trim();
+  pathInput.value = "";
+  addLog(p);
+});
+
+pathInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") addBtn.click();
+});
+</script>
+</body>
+</html>
