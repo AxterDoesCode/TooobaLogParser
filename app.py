@@ -74,6 +74,53 @@ def browse():
     return jsonify({"root": LOG_ROOT, "dirs": dirs})
 
 
+@app.route("/api/parse-folder", methods=["POST"])
+def parse_folder():
+    data = request.get_json()
+    folder = (data or {}).get("dir", "").strip()
+
+    if not folder:
+        return jsonify({"error": "No dir provided"}), 400
+    if not os.path.isdir(folder):
+        return jsonify({"error": f"Directory not found: {folder}"}), 404
+    if LOG_ROOT and not os.path.abspath(folder).startswith(LOG_ROOT):
+        return jsonify({"error": "Directory is outside LOG_ROOT"}), 403
+
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: e.name)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 500
+
+    results = []
+    for f in entries:
+        if not f.is_file():
+            continue
+        if f.name.endswith(".webapp_cache.json") or f.name.endswith(".totals_cache"):
+            continue
+
+        cached = try_load_json_cache(f.path)
+        if cached is not None:
+            results.append({"file": f.name, "path": f.path, "status": "cached"})
+            continue
+
+        try:
+            lp = LogParser(
+                log=f.path,
+                lineTypesToPrune=[None],
+                lineTypesToError=[TimestampedLine],
+                RootLogLine=TimestampedLine,
+                startWhen=(lambda ll: isinstance(ll, RVFILine) and ll.rvfi >= 10000),
+                silent=True,
+            )
+            totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
+            save_json_cache(f.path, totals)
+            results.append({"file": f.name, "path": f.path, "status": "ok"})
+        except Exception as e:
+            results.append({"file": f.name, "path": f.path, "status": "error", "error": str(e)})
+
+    return jsonify({"results": results})
+
+
 @app.route("/api/process", methods=["POST"])
 def process_log():
     data = request.get_json()

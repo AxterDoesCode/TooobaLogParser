@@ -102,6 +102,33 @@
     .cpu-label:hover { background: rgba(255,255,255,0.04); }
     .cpu-label .arrow { font-size: 10px; color: var(--muted); transition: transform 0.15s; }
     .cpu-label.collapsed .arrow { transform: rotate(-90deg); }
+    .cpu-label .dir-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .parse-all-btn {
+      margin-left: auto;
+      flex-shrink: 0;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 1px 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .parse-all-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    .parse-all-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .parse-summary {
+      padding: 3px 14px 5px 28px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .parse-summary .ok    { color: var(--green); }
+    .parse-summary .err   { color: var(--red); cursor: pointer; text-decoration: underline dotted; }
+    .parse-summary .skip  { color: var(--muted); }
 
     .cpu-files { }
     .cpu-label.collapsed + .cpu-files { display: none; }
@@ -391,8 +418,33 @@ function renderBrowser(data) {
     const label = document.createElement("div");
     label.className = "cpu-label";
     label.dataset.dir = dir.name;
-    label.innerHTML = `<span class="arrow">▾</span>${escHtml(dir.name)}`;
-    label.addEventListener("click", () => label.classList.toggle("collapsed"));
+
+    const arrow   = document.createElement("span");
+    arrow.className = "arrow";
+    arrow.textContent = "▾";
+
+    const dirName = document.createElement("span");
+    dirName.className = "dir-name";
+    dirName.textContent = dir.name;
+
+    const parseAllBtn = document.createElement("button");
+    parseAllBtn.className = "parse-all-btn";
+    parseAllBtn.textContent = "Parse All";
+    parseAllBtn.title = "Parse all uncached logs in this folder";
+
+    label.appendChild(arrow);
+    label.appendChild(dirName);
+    label.appendChild(parseAllBtn);
+
+    label.addEventListener("click", e => {
+      if (e.target === parseAllBtn) return; // let button handle its own click
+      label.classList.toggle("collapsed");
+    });
+
+    parseAllBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      parseFolder(dir, group, parseAllBtn);
+    });
 
     const fileList = document.createElement("div");
     fileList.className = "cpu-files";
@@ -605,6 +657,81 @@ refreshBtn.addEventListener("click", () => {
   sidebarEmpty.innerHTML = "";
   loadBrowser();
 });
+
+// ── Parse folder ───────────────────────────────────────────────────────────
+async function parseFolder(dir, group, btn) {
+  btn.disabled = true;
+  btn.textContent = "Parsing…";
+
+  // Remove any existing summary
+  const existing = group.querySelector(".parse-summary");
+  if (existing) existing.remove();
+
+  setStatus(`Parsing all logs in ${dir.name}…`);
+
+  let data;
+  try {
+    const resp = await fetch("/api/parse-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: dir.path }),
+    });
+    data = await resp.json();
+  } catch (e) {
+    setStatus(`Network error: ${e.message}`, "error");
+    btn.disabled = false;
+    btn.textContent = "Parse All";
+    return;
+  }
+
+  if (data.error) {
+    setStatus(`Error: ${data.error}`, "error");
+    btn.disabled = false;
+    btn.textContent = "Parse All";
+    return;
+  }
+
+  const ok      = data.results.filter(r => r.status === "ok");
+  const errors  = data.results.filter(r => r.status === "error");
+  const skipped = data.results.filter(r => r.status === "cached");
+
+  // Show inline summary
+  const summary = document.createElement("div");
+  summary.className = "parse-summary";
+
+  const parts = [];
+  if (ok.length)      parts.push(`<span class="ok">✓ ${ok.length} parsed</span>`);
+  if (skipped.length) parts.push(`<span class="skip">${skipped.length} cached</span>`);
+  if (errors.length) {
+    const errSpan = document.createElement("span");
+    errSpan.className = "err";
+    errSpan.textContent = `✕ ${errors.length} failed`;
+    errSpan.title = errors.map(r => `${r.file}: ${r.error}`).join("\n");
+    summary.innerHTML = parts.join(" · ") + (parts.length ? " · " : "");
+    summary.appendChild(errSpan);
+  } else {
+    summary.innerHTML = parts.join(" · ");
+  }
+
+  const fileList = group.querySelector(".cpu-files");
+  group.insertBefore(summary, fileList);
+
+  // Update cached dots in the sidebar for newly parsed files
+  ok.forEach(r => {
+    const item = group.querySelector(`.file-item[data-path="${escAttr(r.path)}"] .no-dot`);
+    if (item) { item.className = "cached-dot"; item.title = "Cached"; }
+  });
+
+  const statusMsg = [
+    ok.length      ? `${ok.length} parsed`      : "",
+    skipped.length ? `${skipped.length} cached`  : "",
+    errors.length  ? `${errors.length} failed`   : "",
+  ].filter(Boolean).join(", ");
+  setStatus(`${dir.name}: ${statusMsg}`, errors.length ? "error" : "ok");
+
+  btn.disabled = false;
+  btn.textContent = "Parse All";
+}
 
 // ── Sidebar resize ─────────────────────────────────────────────────────────
 const sidebarResizer = document.getElementById("sidebar-resizer");
