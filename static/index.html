@@ -206,6 +206,17 @@
       margin-top: 12px;
     }
 
+    /* ── Sidebar resizer ── */
+    #sidebar-resizer {
+      width: 4px;
+      cursor: col-resize;
+      flex-shrink: 0;
+      background: transparent;
+      transition: background 0.1s;
+      z-index: 10;
+    }
+    #sidebar-resizer:hover, #sidebar-resizer.dragging { background: var(--accent); }
+
     thead th {
       background: var(--head-bg);
       border: 1px solid var(--border);
@@ -215,7 +226,20 @@
       top: 0;
       z-index: 2;
       white-space: nowrap;
+      position: relative; /* for col-resizer positioning */
     }
+
+    /* ── Column resizer ── */
+    .col-resizer {
+      position: absolute;
+      right: 0; top: 0; bottom: 0;
+      width: 4px;
+      cursor: col-resize;
+      background: transparent;
+      transition: background 0.1s;
+      z-index: 3;
+    }
+    .col-resizer:hover, .col-resizer.dragging { background: var(--accent); }
     thead th.stat-col { min-width: 240px; color: var(--muted); font-weight: 400; font-size: 11px; }
     thead th.log-col  { min-width: 150px; }
 
@@ -286,6 +310,8 @@
       <div id="sidebar-empty"></div>
     </div>
   </div>
+
+  <div id="sidebar-resizer"></div>
 
   <!-- ── Main ── -->
   <div id="main">
@@ -476,7 +502,12 @@ function removeLog(path) {
 
 // ── Table ──────────────────────────────────────────────────────────────────
 function renderTable() {
-  theadRow.innerHTML = '<th class="stat-col">Stat</th>';
+  theadRow.innerHTML = "";
+  const statTh = document.createElement("th");
+  statTh.className = "stat-col";
+  statTh.textContent = "Stat";
+  addColResizer(statTh);
+  theadRow.appendChild(statTh);
   tbody.innerHTML = "";
 
   if (logs.length === 0) {
@@ -498,6 +529,7 @@ function renderTable() {
         </div>
         <button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button>
       </div>`;
+    addColResizer(th);
     theadRow.appendChild(th);
   });
 
@@ -573,6 +605,62 @@ refreshBtn.addEventListener("click", () => {
   sidebarEmpty.innerHTML = "";
   loadBrowser();
 });
+
+// ── Sidebar resize ─────────────────────────────────────────────────────────
+const sidebarResizer = document.getElementById("sidebar-resizer");
+const sidebar        = document.getElementById("sidebar");
+
+sidebarResizer.addEventListener("mousedown", e => {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startW = sidebar.getBoundingClientRect().width;
+  sidebarResizer.classList.add("dragging");
+  document.body.style.userSelect = "none";
+
+  function onMove(e) {
+    const w = Math.max(120, startW + e.clientX - startX);
+    sidebar.style.width = w + "px";
+    sidebar.style.minWidth = w + "px";
+  }
+  function onUp() {
+    sidebarResizer.classList.remove("dragging");
+    document.body.style.userSelect = "";
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
+// ── Column resize ──────────────────────────────────────────────────────────
+function addColResizer(th) {
+  const handle = document.createElement("div");
+  handle.className = "col-resizer";
+  th.appendChild(handle);
+
+  handle.addEventListener("mousedown", e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = th.getBoundingClientRect().width;
+    handle.classList.add("dragging");
+    document.body.style.userSelect = "none";
+
+    function onMove(e) {
+      const w = Math.max(60, startW + e.clientX - startX);
+      th.style.width = w + "px";
+      th.style.minWidth = w + "px";
+    }
+    function onUp() {
+      handle.classList.remove("dragging");
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 loadBrowser();
