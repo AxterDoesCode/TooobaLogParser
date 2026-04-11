@@ -108,14 +108,18 @@ def _run_parse_folder(job_id: str, folder: str) -> None:
     with _jobs_lock:
         _jobs[job_id]["total"] = len(entries)
 
-    for f in entries:
-        cached = try_load_json_cache(f.path)
+    for fpath in entries:
+        fname = os.path.basename(fpath)
+        with _jobs_lock:
+            _jobs[job_id]["current"] = fname
+
+        cached = try_load_json_cache(fpath)
         if cached is not None:
-            update({"file": f.name, "path": f.path, "status": "cached"})
+            update({"file": fname, "path": fpath, "status": "cached"})
             continue
         try:
             lp = LogParser(
-                log=f.path,
+                log=fpath,
                 lineTypesToPrune=[None],
                 lineTypesToError=[TimestampedLine],
                 RootLogLine=TimestampedLine,
@@ -123,13 +127,14 @@ def _run_parse_folder(job_id: str, folder: str) -> None:
                 silent=True,
             )
             totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
-            save_json_cache(f.path, totals)
-            update({"file": f.name, "path": f.path, "status": "ok"})
+            save_json_cache(fpath, totals)
+            update({"file": fname, "path": fpath, "status": "ok"})
         except Exception as e:
-            update({"file": f.name, "path": f.path, "status": "error", "error": str(e)})
+            update({"file": fname, "path": fpath, "status": "error", "error": str(e)})
 
     with _jobs_lock:
         _jobs[job_id]["status"] = "done"
+        _jobs[job_id]["current"] = None
 
 
 @app.route("/api/parse-folder", methods=["POST"])
@@ -146,7 +151,7 @@ def parse_folder():
 
     job_id = str(uuid.uuid4())
     with _jobs_lock:
-        _jobs[job_id] = {"status": "running", "results": [], "total": None}
+        _jobs[job_id] = {"status": "running", "results": [], "total": None, "current": None}
 
     thread = threading.Thread(target=_run_parse_folder, args=(job_id, folder), daemon=True)
     thread.start()

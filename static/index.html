@@ -662,7 +662,7 @@ refreshBtn.addEventListener("click", () => {
 });
 
 // ── Parse folder ───────────────────────────────────────────────────────────
-function renderParseSummary(group, results, done) {
+function renderParseSummary(group, results, done, current = null) {
   let summary = group.querySelector(".parse-summary");
   if (!summary) {
     summary = document.createElement("div");
@@ -678,7 +678,8 @@ function renderParseSummary(group, results, done) {
   const parts = [];
   if (ok.length)      parts.push(`<span class="ok">✓ ${ok.length} parsed</span>`);
   if (skipped.length) parts.push(`<span class="skip">${skipped.length} cached</span>`);
-  if (!done)          parts.push(`<span class="skip"><span class="spinner"></span>running…</span>`);
+  if (!done && current) parts.push(`<span class="skip"><span class="spinner"></span>${escHtml(current)}</span>`);
+  else if (!done)        parts.push(`<span class="skip"><span class="spinner"></span>running…</span>`);
 
   summary.innerHTML = parts.join(" · ");
 
@@ -740,10 +741,11 @@ async function parseFolder(dir, group, btn) {
     }
 
     const done = job.status === "done";
-    renderParseSummary(group, job.results, done);
+    renderParseSummary(group, job.results, done, job.current);
 
     const progress = job.total ? `${job.results.length}/${job.total}` : job.results.length;
-    setStatus(`${dir.name}: parsing… (${progress} done)`);
+    const currentMsg = job.current ? ` — ${job.current}` : "";
+    setStatus(`${dir.name}: parsing… (${progress} done)${currentMsg}`);
 
     // Update cached dots for any newly parsed files so far
     job.results.filter(r => r.status === "ok").forEach(r => {
