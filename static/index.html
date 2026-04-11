@@ -405,88 +405,91 @@ async function loadBrowser() {
 
 function renderBrowser(data) {
   sidebarEmpty.innerHTML = "";
-
   if (data.dirs.length === 0) {
     sidebarEmpty.textContent = `No subdirectories found in ${data.root}`;
     return;
   }
+  data.dirs.forEach(dir => sidebarEmpty.appendChild(renderDirGroup(dir, 0)));
+}
 
-  data.dirs.forEach(dir => {
-    const group = document.createElement("div");
-    group.className = "cpu-group";
+function renderDirGroup(dir, depth) {
+  const group = document.createElement("div");
+  group.className = "cpu-group";
 
-    const label = document.createElement("div");
-    label.className = "cpu-label";
-    label.dataset.dir = dir.name;
+  const label = document.createElement("div");
+  label.className = "cpu-label";
+  label.dataset.dir = dir.name;
+  label.style.paddingLeft = `${14 + depth * 12}px`;
 
-    const arrow   = document.createElement("span");
-    arrow.className = "arrow";
-    arrow.textContent = "▾";
+  const arrow = document.createElement("span");
+  arrow.className = "arrow";
+  arrow.textContent = "▾";
 
-    const dirName = document.createElement("span");
-    dirName.className = "dir-name";
-    dirName.textContent = dir.name;
+  const dirName = document.createElement("span");
+  dirName.className = "dir-name";
+  dirName.textContent = dir.name;
 
-    const parseAllBtn = document.createElement("button");
-    parseAllBtn.className = "parse-all-btn";
-    parseAllBtn.textContent = "Parse All";
-    parseAllBtn.title = "Parse all uncached logs in this folder";
+  const parseAllBtn = document.createElement("button");
+  parseAllBtn.className = "parse-all-btn";
+  parseAllBtn.textContent = "Parse All";
+  parseAllBtn.title = "Parse all uncached logs in this folder (recursive)";
 
-    label.appendChild(arrow);
-    label.appendChild(dirName);
-    label.appendChild(parseAllBtn);
+  label.appendChild(arrow);
+  label.appendChild(dirName);
+  label.appendChild(parseAllBtn);
 
-    label.addEventListener("click", e => {
-      if (e.target === parseAllBtn) return; // let button handle its own click
-      label.classList.toggle("collapsed");
-    });
-
-    parseAllBtn.addEventListener("click", e => {
-      e.stopPropagation();
-      parseFolder(dir, group, parseAllBtn);
-    });
-
-    const fileList = document.createElement("div");
-    fileList.className = "cpu-files";
-
-    if (dir.files.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "file-item";
-      empty.style.color = "var(--muted)";
-      empty.textContent = "(no files)";
-      fileList.appendChild(empty);
-    } else {
-      dir.files.forEach(file => {
-        const item = document.createElement("div");
-        item.className = "file-item";
-        item.dataset.path = file.path;
-        item.title = file.path;
-        if (logs.find(l => l.path === file.path)) item.classList.add("active");
-
-        const dot = document.createElement("span");
-        dot.className = file.cached ? "cached-dot" : "no-dot";
-        if (file.cached) dot.title = "Cached";
-
-        const name = document.createElement("span");
-        name.textContent = file.name;
-
-        item.appendChild(dot);
-        item.appendChild(name);
-        item.addEventListener("click", () => {
-          if (logs.find(l => l.path === file.path)) {
-            removeLog(file.path);
-          } else {
-            addLog(file.path);
-          }
-        });
-        fileList.appendChild(item);
-      });
-    }
-
-    group.appendChild(label);
-    group.appendChild(fileList);
-    sidebarEmpty.appendChild(group);
+  label.addEventListener("click", e => {
+    if (e.target === parseAllBtn) return;
+    label.classList.toggle("collapsed");
   });
+  parseAllBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    parseFolder(dir, group, parseAllBtn);
+  });
+
+  const fileList = document.createElement("div");
+  fileList.className = "cpu-files";
+
+  // Nested subdirectories
+  dir.dirs.forEach(sub => fileList.appendChild(renderDirGroup(sub, depth + 1)));
+
+  // Files in this directory
+  dir.files.forEach(file => {
+    const item = document.createElement("div");
+    item.className = "file-item";
+    item.dataset.path = file.path;
+    item.title = file.path;
+    item.style.paddingLeft = `${28 + depth * 12}px`;
+    if (logs.find(l => l.path === file.path)) item.classList.add("active");
+
+    const dot = document.createElement("span");
+    dot.className = file.cached ? "cached-dot" : "no-dot";
+    if (file.cached) dot.title = "Cached";
+
+    const name = document.createElement("span");
+    name.textContent = file.name;
+
+    item.appendChild(dot);
+    item.appendChild(name);
+    item.addEventListener("click", () => {
+      if (logs.find(l => l.path === file.path)) removeLog(file.path);
+      else addLog(file.path);
+    });
+    fileList.appendChild(item);
+  });
+
+  if (dir.dirs.length === 0 && dir.files.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "file-item";
+    empty.style.color = "var(--muted)";
+    empty.style.paddingLeft = `${28 + depth * 12}px`;
+    empty.textContent = "(no files)";
+    fileList.appendChild(empty);
+  }
+
+  group.appendChild(label);
+  group.appendChild(fileList);
+  return group;
 }
 
 function updateSidebarActive() {
@@ -659,78 +662,113 @@ refreshBtn.addEventListener("click", () => {
 });
 
 // ── Parse folder ───────────────────────────────────────────────────────────
+function renderParseSummary(group, results, done) {
+  let summary = group.querySelector(".parse-summary");
+  if (!summary) {
+    summary = document.createElement("div");
+    summary.className = "parse-summary";
+    const fileList = group.querySelector(".cpu-files");
+    group.insertBefore(summary, fileList);
+  }
+
+  const ok      = results.filter(r => r.status === "ok");
+  const errors  = results.filter(r => r.status === "error");
+  const skipped = results.filter(r => r.status === "cached");
+
+  const parts = [];
+  if (ok.length)      parts.push(`<span class="ok">✓ ${ok.length} parsed</span>`);
+  if (skipped.length) parts.push(`<span class="skip">${skipped.length} cached</span>`);
+  if (!done)          parts.push(`<span class="skip"><span class="spinner"></span>running…</span>`);
+
+  summary.innerHTML = parts.join(" · ");
+
+  if (errors.length) {
+    if (parts.length) summary.innerHTML += " · ";
+    const errSpan = document.createElement("span");
+    errSpan.className = "err";
+    errSpan.textContent = `✕ ${errors.length} failed`;
+    errSpan.title = errors.map(r => `${r.file}: ${r.error}`).join("\n");
+    summary.appendChild(errSpan);
+  }
+}
+
 async function parseFolder(dir, group, btn) {
   btn.disabled = true;
   btn.textContent = "Parsing…";
 
-  // Remove any existing summary
   const existing = group.querySelector(".parse-summary");
   if (existing) existing.remove();
 
-  setStatus(`Parsing all logs in ${dir.name}…`);
+  setStatus(`Starting parse job for ${dir.name}…`);
 
-  let data;
+  // Start the background job
+  let jobId;
   try {
     const resp = await fetch("/api/parse-folder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dir: dir.path }),
     });
-    data = await resp.json();
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    jobId = data.job_id;
   } catch (e) {
-    setStatus(`Network error: ${e.message}`, "error");
+    setStatus(`Error: ${e.message}`, "error");
     btn.disabled = false;
     btn.textContent = "Parse All";
     return;
   }
 
-  if (data.error) {
-    setStatus(`Error: ${data.error}`, "error");
+  // Poll for progress
+  const poll = async () => {
+    let job;
+    try {
+      const resp = await fetch(`/api/parse-folder/${jobId}`);
+      job = await resp.json();
+    } catch (e) {
+      setStatus(`Polling error: ${e.message}`, "error");
+      btn.disabled = false;
+      btn.textContent = "Parse All";
+      return;
+    }
+
+    if (job.error) {
+      setStatus(`Error: ${job.error}`, "error");
+      btn.disabled = false;
+      btn.textContent = "Parse All";
+      return;
+    }
+
+    const done = job.status === "done";
+    renderParseSummary(group, job.results, done);
+
+    const progress = job.total ? `${job.results.length}/${job.total}` : job.results.length;
+    setStatus(`${dir.name}: parsing… (${progress} done)`);
+
+    // Update cached dots for any newly parsed files so far
+    job.results.filter(r => r.status === "ok").forEach(r => {
+      const el = group.querySelector(`.file-item[data-path="${escAttr(r.path)}"] .no-dot`);
+      if (el) { el.className = "cached-dot"; el.title = "Cached"; }
+    });
+
+    if (!done) {
+      setTimeout(poll, 1500);
+      return;
+    }
+
+    // Final status
+    const ok      = job.results.filter(r => r.status === "ok").length;
+    const errors  = job.results.filter(r => r.status === "error").length;
+    const skipped = job.results.filter(r => r.status === "cached").length;
+    const msg = [ok && `${ok} parsed`, skipped && `${skipped} cached`, errors && `${errors} failed`]
+      .filter(Boolean).join(", ");
+    setStatus(`${dir.name}: ${msg}`, errors ? "error" : "ok");
+
     btn.disabled = false;
     btn.textContent = "Parse All";
-    return;
-  }
+  };
 
-  const ok      = data.results.filter(r => r.status === "ok");
-  const errors  = data.results.filter(r => r.status === "error");
-  const skipped = data.results.filter(r => r.status === "cached");
-
-  // Show inline summary
-  const summary = document.createElement("div");
-  summary.className = "parse-summary";
-
-  const parts = [];
-  if (ok.length)      parts.push(`<span class="ok">✓ ${ok.length} parsed</span>`);
-  if (skipped.length) parts.push(`<span class="skip">${skipped.length} cached</span>`);
-  if (errors.length) {
-    const errSpan = document.createElement("span");
-    errSpan.className = "err";
-    errSpan.textContent = `✕ ${errors.length} failed`;
-    errSpan.title = errors.map(r => `${r.file}: ${r.error}`).join("\n");
-    summary.innerHTML = parts.join(" · ") + (parts.length ? " · " : "");
-    summary.appendChild(errSpan);
-  } else {
-    summary.innerHTML = parts.join(" · ");
-  }
-
-  const fileList = group.querySelector(".cpu-files");
-  group.insertBefore(summary, fileList);
-
-  // Update cached dots in the sidebar for newly parsed files
-  ok.forEach(r => {
-    const item = group.querySelector(`.file-item[data-path="${escAttr(r.path)}"] .no-dot`);
-    if (item) { item.className = "cached-dot"; item.title = "Cached"; }
-  });
-
-  const statusMsg = [
-    ok.length      ? `${ok.length} parsed`      : "",
-    skipped.length ? `${skipped.length} cached`  : "",
-    errors.length  ? `${errors.length} failed`   : "",
-  ].filter(Boolean).join(", ");
-  setStatus(`${dir.name}: ${statusMsg}`, errors.length ? "error" : "ok");
-
-  btn.disabled = false;
-  btn.textContent = "Parse All";
+  poll();
 }
 
 // ── Sidebar resize ─────────────────────────────────────────────────────────

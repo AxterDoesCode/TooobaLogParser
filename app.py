@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import sys
+import threading
+import uuid
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -12,6 +14,10 @@ app = Flask(__name__, static_folder="static")
 
 # Resolved at startup via --log-root CLI arg or LOG_ROOT env var
 LOG_ROOT: str = ""
+
+# Background parse-folder jobs: job_id -> {status, results, total}
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
 
 
 def get_json_cache_path(logfile: str) -> str:
@@ -45,6 +51,26 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+_LOG_CACHE_SUFFIXES = (".webapp_cache.json", ".totals_cache")
+
+
+def _scan_dir(path: str, depth: int = 0, max_depth: int = 16) -> dict:
+    """Recursively build a directory tree with file cache status."""
+    result: dict = {"name": os.path.basename(path), "path": path, "files": [], "dirs": []}
+    try:
+        entries = sorted(os.scandir(path), key=lambda e: e.name)
+    except PermissionError:
+        return result
+    for entry in entries:
+        if entry.is_dir():
+            if depth < max_depth:
+                result["dirs"].append(_scan_dir(entry.path, depth + 1, max_depth))
+        elif entry.is_file() and not any(entry.name.endswith(s) for s in _LOG_CACHE_SUFFIXES):
+            cached = os.path.exists(get_json_cache_path(entry.path))
+            result["files"].append({"name": entry.name, "path": entry.path, "cached": cached})
+    return result
+
+
 @app.route("/api/browse")
 def browse():
     if not LOG_ROOT:
@@ -52,26 +78,58 @@ def browse():
     if not os.path.isdir(LOG_ROOT):
         return jsonify({"error": f"LOG_ROOT directory not found: {LOG_ROOT}"}), 404
 
-    dirs = []
     try:
         entries = sorted(os.scandir(LOG_ROOT), key=lambda e: e.name)
     except PermissionError as e:
         return jsonify({"error": str(e)}), 500
 
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        files = []
-        try:
-            for f in sorted(os.scandir(entry.path), key=lambda e: e.name):
-                if f.is_file() and not f.name.endswith(".webapp_cache.json") and not f.name.endswith(".totals_cache"):
-                    cached = os.path.exists(get_json_cache_path(f.path))
-                    files.append({"name": f.name, "path": f.path, "cached": cached})
-        except PermissionError:
-            pass
-        dirs.append({"name": entry.name, "path": entry.path, "files": files})
-
+    dirs = [_scan_dir(e.path) for e in entries if e.is_dir()]
     return jsonify({"root": LOG_ROOT, "dirs": dirs})
+
+
+def _run_parse_folder(job_id: str, folder: str) -> None:
+    """Runs in a background thread. Parses all uncached files in folder."""
+    def update(result: dict) -> None:
+        with _jobs_lock:
+            _jobs[job_id]["results"].append(result)
+
+    try:
+        entries = []
+        for dirpath, dirnames, filenames in os.walk(folder):
+            dirnames.sort()
+            for fname in sorted(filenames):
+                if not any(fname.endswith(s) for s in _LOG_CACHE_SUFFIXES):
+                    entries.append(os.path.join(dirpath, fname))
+    except PermissionError as e:
+        with _jobs_lock:
+            _jobs[job_id].update({"status": "error", "error": str(e)})
+        return
+
+    with _jobs_lock:
+        _jobs[job_id]["total"] = len(entries)
+
+    for f in entries:
+        cached = try_load_json_cache(f.path)
+        if cached is not None:
+            update({"file": f.name, "path": f.path, "status": "cached"})
+            continue
+        try:
+            lp = LogParser(
+                log=f.path,
+                lineTypesToPrune=[None],
+                lineTypesToError=[TimestampedLine],
+                RootLogLine=TimestampedLine,
+                startWhen=(lambda ll: isinstance(ll, RVFILine) and ll.rvfi >= 10000),
+                silent=True,
+            )
+            totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
+            save_json_cache(f.path, totals)
+            update({"file": f.name, "path": f.path, "status": "ok"})
+        except Exception as e:
+            update({"file": f.name, "path": f.path, "status": "error", "error": str(e)})
+
+    with _jobs_lock:
+        _jobs[job_id]["status"] = "done"
 
 
 @app.route("/api/parse-folder", methods=["POST"])
@@ -86,39 +144,22 @@ def parse_folder():
     if LOG_ROOT and not os.path.abspath(folder).startswith(LOG_ROOT):
         return jsonify({"error": "Directory is outside LOG_ROOT"}), 403
 
-    try:
-        entries = sorted(os.scandir(folder), key=lambda e: e.name)
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 500
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "results": [], "total": None}
 
-    results = []
-    for f in entries:
-        if not f.is_file():
-            continue
-        if f.name.endswith(".webapp_cache.json") or f.name.endswith(".totals_cache"):
-            continue
+    thread = threading.Thread(target=_run_parse_folder, args=(job_id, folder), daemon=True)
+    thread.start()
+    return jsonify({"job_id": job_id})
 
-        cached = try_load_json_cache(f.path)
-        if cached is not None:
-            results.append({"file": f.name, "path": f.path, "status": "cached"})
-            continue
 
-        try:
-            lp = LogParser(
-                log=f.path,
-                lineTypesToPrune=[None],
-                lineTypesToError=[TimestampedLine],
-                RootLogLine=TimestampedLine,
-                startWhen=(lambda ll: isinstance(ll, RVFILine) and ll.rvfi >= 10000),
-                silent=True,
-            )
-            totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
-            save_json_cache(f.path, totals)
-            results.append({"file": f.name, "path": f.path, "status": "ok"})
-        except Exception as e:
-            results.append({"file": f.name, "path": f.path, "status": "error", "error": str(e)})
-
-    return jsonify({"results": results})
+@app.route("/api/parse-folder/<job_id>", methods=["GET"])
+def parse_folder_status(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job)
 
 
 @app.route("/api/process", methods=["POST"])
