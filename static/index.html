@@ -228,8 +228,7 @@
 
     table {
       border-collapse: collapse;
-      min-width: max-content;
-      width: 100%;
+      table-layout: fixed;
       margin-top: 12px;
     }
 
@@ -267,15 +266,21 @@
       z-index: 3;
     }
     .col-resizer:hover, .col-resizer.dragging { background: var(--accent); }
-    thead th.stat-col { min-width: 240px; color: var(--muted); font-weight: 400; font-size: 11px; }
-    thead th.log-col  { min-width: 150px; }
+    thead th.stat-col { color: var(--muted); font-weight: 400; font-size: 11px; }
+    thead th.log-col  { cursor: grab; }
+    thead th.log-col.dragging-col { opacity: 0.4; cursor: grabbing; }
+    thead th.log-col.drop-target-left  { box-shadow: inset 3px 0 0 var(--accent); }
+    thead th.log-col.drop-target-right { box-shadow: inset -3px 0 0 var(--accent); }
 
-    .log-header { display: flex; flex-direction: column; gap: 2px; }
-    .log-header .log-name { color: var(--accent); font-weight: 600; font-size: 12px; }
-    .log-header .log-dir  { color: var(--muted); font-size: 10px; }
-    .log-header .log-cycle { color: var(--yellow); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .log-header { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .log-header .log-name  { color: var(--accent); font-weight: 600; font-size: 12px;
+                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .log-header .log-dir   { color: var(--muted); font-size: 10px;
+                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .log-header .log-cycle { color: var(--yellow); font-size: 10px; font-variant-numeric: tabular-nums;
+                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .th-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+    .th-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; min-width: 0; }
     .remove-btn {
       background: transparent; border: none;
       color: var(--muted); cursor: pointer;
@@ -286,7 +291,8 @@
     tbody tr { border-bottom: 1px solid var(--border); }
     tbody tr:hover td { background: rgba(255,255,255,0.02); }
 
-    td { border-left: 1px solid var(--border); padding: 4px 14px; white-space: nowrap; }
+    td { border-left: 1px solid var(--border); padding: 4px 14px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
 
     tr.section-header td {
       background: var(--head-bg);
@@ -301,6 +307,8 @@
     td.val       { text-align: right; font-variant-numeric: tabular-nums; }
     td.val.diff  { background: var(--diff-hi); color: var(--yellow); }
     td.val.zero  { color: var(--muted); }
+    td.val .pct  { color: var(--muted); margin-left: 4px; font-size: 11px; }
+    td.val.diff .pct { color: var(--yellow); opacity: 0.75; }
     td.missing   { text-align: right; color: var(--muted); }
 
     #empty-msg {
@@ -363,6 +371,10 @@
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 const logs = []; // Array<{ path, name, dir, totals, cached }>
+const colWidths = {}; // key -> px; key is "__stat__" for the Stat col, log.path for log cols
+const DEFAULT_STAT_W = 240;
+const DEFAULT_LOG_W  = 150;
+const MIN_COL_W      = 30;
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const pathInput   = document.getElementById("path-input");
@@ -387,6 +399,25 @@ function dirname(p)  { const parts = p.split("/").filter(Boolean); parts.pop(); 
 function escHtml(s)  { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function escAttr(s)  { return s.replace(/"/g,"&quot;"); }
 function fmtNum(n)   { return Number(n).toLocaleString(); }
+
+// Prefetch summary helpers
+function gNum(log, lt, key) {
+  const t = (log.totals || {})[lt];
+  if (!t) return 0;
+  const v = t[key];
+  return v == null ? 0 : +v;
+}
+function fmtPct(num, denom) {
+  if (!denom) return "—";
+  return (100 * num / denom).toFixed(1) + "%";
+}
+function fmtRatio(num, denom) {
+  if (!denom) return "—";
+  return (num / denom).toFixed(2);
+}
+function pctCell(count, pctStr) {
+  return `${fmtNum(count)} <span class="pct">(${pctStr})</span>`;
+}
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
 async function loadBrowser() {
@@ -557,13 +588,214 @@ function removeLog(path) {
   setStatus(logs.length === 0 ? "" : `Removed ${basename(path)}`);
 }
 
+// ── Prefetch Summary ───────────────────────────────────────────────────────
+function addSummarySection(title, colSpan) {
+  const tr = document.createElement("tr");
+  tr.className = "section-header";
+  const td = document.createElement("td");
+  td.colSpan = colSpan;
+  td.textContent = title;
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+// cellFn(log) -> { html: string|null, cmp: number|null|undefined }
+// cmp is the comparable underlying value used for diff highlighting.
+// Return html:null to render as a missing "—" cell.
+function addSummaryRow(label, logs, cellFn) {
+  const cells = logs.map(cellFn);
+  const cmpVals = cells.map(c => c.cmp);
+  const defined = cmpVals.filter(v => v != null && !Number.isNaN(v));
+  const allSame = defined.length === cmpVals.length && defined.length > 0
+                  && defined.every(v => v === defined[0]);
+  const isDiff = logs.length > 1 && !allSame;
+
+  const tr = document.createElement("tr");
+  const nameTd = document.createElement("td");
+  nameTd.className = "stat-name";
+  nameTd.textContent = label;
+  nameTd.title = label;
+  tr.appendChild(nameTd);
+
+  cells.forEach(c => {
+    const td = document.createElement("td");
+    if (c.html == null) {
+      td.className = "missing";
+      td.textContent = "—";
+    } else {
+      td.className = "val";
+      if (isDiff) td.classList.add("diff");
+      if (c.cmp === 0) td.classList.add("zero");
+      td.innerHTML = c.html;
+      td.title = td.textContent;
+    }
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr);
+}
+
+function renderPrefetchSummary(logs) {
+  const nCols = 1 + logs.length;
+
+  // ── 1. Pipeline funnel ──
+  addSummarySection("PREFETCH SUMMARY — Pipeline funnel", nCols);
+
+  addSummaryRow("TT training hits", logs, log => {
+    const v = gNum(log, "CDPTrainingHitLine", "ttTrainingHits");
+    return { html: fmtNum(v), cmp: v };
+  });
+  addSummaryRow("→ Decisions (% of TT hits)", logs, log => {
+    const num = gNum(log, "CDPPrefetchDecisionLine", "prefetchDecisions");
+    const den = gNum(log, "CDPTrainingHitLine", "ttTrainingHits");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("→ Issued (% of decisions)", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    const den = gNum(log, "CDPPrefetchDecisionLine", "prefetchDecisions");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("→ Useful (% of issued = accuracy)", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "cdpPrefetchUseful");
+    const den = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("No-high-conf drops (% of TT hits)", logs, log => {
+    const num = gNum(log, "CDPNoHighConfLine", "pctLookupNoHighConf");
+    const den = gNum(log, "CDPTrainingHitLine", "ttTrainingHits");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("TLB exceptions (% of decisions)", logs, log => {
+    const num = gNum(log, "CDPTlbExceptionLine", "tlbExceptions");
+    const den = gNum(log, "CDPPrefetchDecisionLine", "prefetchDecisions");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("Filter duplicates dropped", logs, log => {
+    const num = gNum(log, "CDPFilterHitLine", "filterDuplicatesDropped");
+    const issued = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    const den = num + issued;
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+
+  // ── 2. Accuracy & timing ──
+  addSummarySection("Accuracy & timing", nCols);
+
+  addSummaryRow("Accuracy (useful / (useful+useless))", logs, log => {
+    const useful  = gNum(log, "CDPFilterMissLine", "cdpPrefetchUseful");
+    const useless = gNum(log, "CDPFilterMissLine", "cdpPrefetchUseless");
+    const den = useful + useless;
+    const pct = fmtPct(useful, den);
+    return { html: `${pct} <span class="pct">(${fmtNum(useful)} / ${fmtNum(den)})</span>`,
+             cmp: den ? useful / den : null };
+  });
+  addSummaryRow("Late arrivals (% of issued)", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "cdpPrefetchLate");
+    const den = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("Cache disruption (% of issued)", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "cdpPrefetchDisrupt");
+    const den = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("Link coverage (sanity, ~100%)", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "cdpPrefetchLinked");
+    const den = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("Prefetches / kcycle", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "filterPrefetchesIssued");
+    if (!log.finalCycle) return { html: "—", cmp: null };
+    const rate = num * 1000 / log.finalCycle;
+    return { html: rate.toFixed(2), cmp: +rate.toFixed(2) };
+  });
+  addSummaryRow("Useful / kcycle", logs, log => {
+    const num = gNum(log, "CDPFilterMissLine", "cdpPrefetchUseful");
+    if (!log.finalCycle) return { html: "—", cmp: null };
+    const rate = num * 1000 / log.finalCycle;
+    return { html: rate.toFixed(2), cmp: +rate.toFixed(2) };
+  });
+
+  // ── 3. Category accuracy ──
+  addSummarySection("Category accuracy (useful / useless)", nCols);
+
+  const categories = [
+    ["Same-page",  "samePage"],
+    ["Cross-page", "crossPage"],
+    ["In-bounds",  "inBounds"],
+    ["Neighbour",  "neighbour"],
+    ["Non-chain",  "nonChain"],
+    ["Chain",      "chain"],
+  ];
+  categories.forEach(([label, tag]) => {
+    addSummaryRow(label, logs, log => {
+      const useful  = gNum(log, "CDPFilterMissLine", `cdpPref_${tag}_Useful`);
+      const useless = gNum(log, "CDPFilterMissLine", `cdpPref_${tag}_Useless`);
+      const den = useful + useless;
+      if (!den) return { html: `— <span class="pct">(0 / 0)</span>`, cmp: null };
+      const acc = fmtPct(useful, den);
+      return { html: `${fmtNum(useful)} / ${fmtNum(useless)} <span class="pct">(${acc})</span>`,
+               cmp: useful };
+    });
+  });
+
+  // ── 4. Confidence calibration ──
+  addSummarySection("Confidence calibration (useful / useless)", nCols);
+
+  // Conf counters are 3-bit saturating (0..7); issue threshold is conf >= 1,
+  // so only conf 1..7 can appear in useful/useless totals. Probe 0 too for safety;
+  // rows with no data are skipped below.
+  for (let c = 0; c <= 7; c++) {
+    const anyData = logs.some(log =>
+      gNum(log, "CDPPrefetchDecisionLine", `cdpUsefulAtConf${c}`)
+      + gNum(log, "CDPPrefetchDecisionLine", `cdpUselessAtConf${c}`) > 0);
+    if (!anyData) continue;
+    addSummaryRow(`conf=${c}`, logs, log => {
+      const useful  = gNum(log, "CDPPrefetchDecisionLine", `cdpUsefulAtConf${c}`);
+      const useless = gNum(log, "CDPPrefetchDecisionLine", `cdpUselessAtConf${c}`);
+      const den = useful + useless;
+      if (!den) return { html: `— <span class="pct">(0 / 0)</span>`, cmp: null };
+      const acc = fmtPct(useful, den);
+      return { html: `${fmtNum(useful)} / ${fmtNum(useless)} <span class="pct">(${acc})</span>`,
+               cmp: useful };
+    });
+  }
+
+  // ── 5. Candidate predictiveness ──
+  addSummarySection("Candidate predictiveness", nCols);
+
+  addSummaryRow("TT hits with prior candidate", logs, log => {
+    const num = gNum(log, "CDPTrainingHitLine", "ttHitWithPriorCandidate");
+    const den = gNum(log, "CDPTrainingHitLine", "ttTrainingHits");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+  addSummaryRow("Cross-page origin (of TT hits w/ origin)", logs, log => {
+    const cross = gNum(log, "CDPTrainingHitLine", "ttHitWithCrossPageOrigin");
+    const same  = gNum(log, "CDPTrainingHitLine", "ttHitWithSamePageOrigin");
+    const den = cross + same;
+    return { html: pctCell(cross, fmtPct(cross, den)), cmp: cross };
+  });
+
+  // Neighbour-chain subsection
+  addSummarySection("Neighbour-chain", nCols);
+  addSummaryRow("Chain attempts", logs, log => {
+    const v = gNum(log, "CDPNeighbourChainLine", "neighbourChainAttempts");
+    return { html: fmtNum(v), cmp: v };
+  });
+  addSummaryRow("VPN-check failures (% of attempts)", logs, log => {
+    const num = gNum(log, "CDPNeighbourChainLine", "neighbourChainVpnFailed");
+    const den = gNum(log, "CDPNeighbourChainLine", "neighbourChainAttempts");
+    return { html: pctCell(num, fmtPct(num, den)), cmp: num };
+  });
+}
+
 // ── Table ──────────────────────────────────────────────────────────────────
 function renderTable() {
   theadRow.innerHTML = "";
   const statTh = document.createElement("th");
   statTh.className = "stat-col";
   statTh.textContent = "Stat";
-  addColResizer(statTh);
+  statTh.style.width = (colWidths.__stat__ ?? DEFAULT_STAT_W) + "px";
+  addColResizer(statTh, "__stat__");
   theadRow.appendChild(statTh);
   tbody.innerHTML = "";
 
@@ -578,21 +810,29 @@ function renderTable() {
   logs.forEach(log => {
     const th = document.createElement("th");
     th.className = "log-col";
+    th.style.width = (colWidths[log.path] ?? DEFAULT_LOG_W) + "px";
     const finalCycleStr = log.finalCycle != null
-      ? `<span class="log-cycle">cycles: ${fmtNum(log.finalCycle)}</span>`
+      ? `<span class="log-cycle" title="cycles: ${fmtNum(log.finalCycle)}">cycles: ${fmtNum(log.finalCycle)}</span>`
       : "";
     th.innerHTML = `
       <div class="th-inner">
         <div class="log-header">
-          <span class="log-name">${escHtml(log.name)}</span>
-          <span class="log-dir">${escHtml(log.dir)}</span>
+          <span class="log-name" title="${escAttr(log.name)}">${escHtml(log.name)}</span>
+          <span class="log-dir" title="${escAttr(log.dir)}">${escHtml(log.dir)}</span>
           ${finalCycleStr}
         </div>
-        <button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button>
+        <button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove" draggable="false">✕</button>
       </div>`;
-    addColResizer(th);
+    addColResizer(th, log.path);
+    makeColDraggable(th, log);
     theadRow.appendChild(th);
   });
+
+  // Derived prefetch summary — rendered at the top of tbody
+  renderPrefetchSummary(logs);
+
+  // Raw per-LineType totals (existing section header)
+  addSummarySection("RAW TOTALS", 1 + logs.length);
 
   // Collect LineTypes in order
   const ltOrder = [], ltSeen = new Set();
@@ -625,6 +865,7 @@ function renderTable() {
       const nameTd = document.createElement("td");
       nameTd.className = "stat-name";
       nameTd.textContent = key;
+      nameTd.title = key;
       tr.appendChild(nameTd);
 
       values.forEach(v => {
@@ -637,6 +878,7 @@ function renderTable() {
           if (isDiff) td.classList.add("diff");
           if (v === 0) td.classList.add("zero");
           td.textContent = fmtNum(v);
+          td.title = td.textContent;
         }
         tr.appendChild(td);
       });
@@ -806,9 +1048,10 @@ sidebarResizer.addEventListener("mousedown", e => {
 });
 
 // ── Column resize ──────────────────────────────────────────────────────────
-function addColResizer(th) {
+function addColResizer(th, key) {
   const handle = document.createElement("div");
   handle.className = "col-resizer";
+  handle.draggable = false;
   th.appendChild(handle);
 
   handle.addEventListener("mousedown", e => {
@@ -820,9 +1063,9 @@ function addColResizer(th) {
     document.body.style.userSelect = "none";
 
     function onMove(e) {
-      const w = Math.max(60, startW + e.clientX - startX);
+      const w = Math.max(MIN_COL_W, startW + e.clientX - startX);
       th.style.width = w + "px";
-      th.style.minWidth = w + "px";
+      if (key) colWidths[key] = w;
     }
     function onUp() {
       handle.classList.remove("dragging");
@@ -832,6 +1075,52 @@ function addColResizer(th) {
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  });
+}
+
+// ── Column drag-reorder ────────────────────────────────────────────────────
+function makeColDraggable(th, log) {
+  th.draggable = true;
+  th.dataset.path = log.path;
+
+  th.addEventListener("dragstart", e => {
+    // Ignore drags that start on interactive children (resizer, buttons, etc).
+    if (e.target.closest(".col-resizer, .remove-btn")) { e.preventDefault(); return; }
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", log.path);
+    th.classList.add("dragging-col");
+  });
+  th.addEventListener("dragend", () => {
+    th.classList.remove("dragging-col");
+    document.querySelectorAll(".drop-target-left, .drop-target-right")
+      .forEach(el => el.classList.remove("drop-target-left", "drop-target-right"));
+  });
+  th.addEventListener("dragover", e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = th.getBoundingClientRect();
+    const leftHalf = e.clientX < rect.left + rect.width / 2;
+    th.classList.toggle("drop-target-left",  leftHalf);
+    th.classList.toggle("drop-target-right", !leftHalf);
+  });
+  th.addEventListener("dragleave", () => {
+    th.classList.remove("drop-target-left", "drop-target-right");
+  });
+  th.addEventListener("drop", e => {
+    e.preventDefault();
+    const src = e.dataTransfer.getData("text/plain");
+    const dst = log.path;
+    const before = th.classList.contains("drop-target-left");
+    th.classList.remove("drop-target-left", "drop-target-right");
+    if (!src || src === dst) return;
+    const srcIdx = logs.findIndex(l => l.path === src);
+    const dstIdx = logs.findIndex(l => l.path === dst);
+    if (srcIdx < 0 || dstIdx < 0) return;
+    const [moved] = logs.splice(srcIdx, 1);
+    let insertAt = logs.findIndex(l => l.path === dst);
+    if (!before) insertAt += 1;
+    logs.splice(insertAt, 0, moved);
+    renderTable();
   });
 }
 
