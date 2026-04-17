@@ -1184,17 +1184,15 @@ class CDPPcTableUpdateLine(NonRVFILine):
     """PC table confidence updated after a training hit."""
 
     _TEST_REGEX = r"^\d+ AlexLog: CDP Rel PC table updated"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table updated, idx: \d+ pcHash: ([0-9a-f]+) relOffset: ([+-]?\d+) cDelta: (\d+) -> (\d+) cSig: (\d+) -> (\d+)"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table updated, idx: \d+ pcHash: ([0-9a-f]+) relOffset: ([+-]?\d+) conf: (\d+) -> (\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPPcTableUpdateLine.dataRegex(line)
-        self.pcHash      = int(reData[1], 16)
-        self.relOffset   = int(reData[2])
-        self.oldCDelta   = int(reData[3])
-        self.newCDelta   = int(reData[4])
-        self.oldCSig     = int(reData[5])
-        self.newCSig     = int(reData[6])
+        self.pcHash    = int(reData[1], 16)
+        self.relOffset = int(reData[2])
+        self.oldConf   = int(reData[3])
+        self.newConf   = int(reData[4])
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
@@ -1205,8 +1203,7 @@ class CDPPcTableUpdateLine(NonRVFILine):
         if self.discard: return {}
         return {
             "pctUpdateRelOffset": self.relOffset,
-            "pctNewCSig":         self.newCSig,
-            "pctNewCDelta":       self.newCDelta,
+            "pctNewConf":         self.newConf,
         }
 
 
@@ -1215,16 +1212,15 @@ class CDPPrefetchDecisionLine(NonRVFILine):
     """Prefetch issued: high-confidence offset selected from PCT entry."""
 
     _TEST_REGEX = r"^\d+ AlexLog: CDP Rel prefetch decision"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset ([+-]?\d+) cDelta (\d+) cSig (\d+) isNeighbour ([01])"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset ([+-]?\d+) conf (\d+) isNeighbour ([01])"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPPrefetchDecisionLine.dataRegex(line)
         self.pcHash      = int(reData[1], 16)
         self.relOffset   = int(reData[2])
-        self.cDelta      = int(reData[3])
-        self.cSig        = int(reData[4])
-        self.isNeighbour = reData[5] == "1"
+        self.conf        = int(reData[3])
+        self.isNeighbour = reData[4] == "1"
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
@@ -1237,12 +1233,9 @@ class CDPPrefetchDecisionLine(NonRVFILine):
 
     def getDistributions(self) -> dict[str, int]:
         if self.discard: return {}
-        ratio = (self.cDelta * 100) // self.cSig if self.cSig > 0 else 0
         return {
-            "prefetchDecisionRelOffset":        self.relOffset,
-            "prefetchDecisionCDelta":           self.cDelta,
-            "prefetchDecisionCSig":             self.cSig,
-            "prefetchDecisionConfidenceRatio":  ratio,
+            "prefetchDecisionRelOffset": self.relOffset,
+            "prefetchDecisionConf":      self.conf,
         }
 
 
@@ -1251,14 +1244,13 @@ class CDPNoHighConfLine(NonRVFILine):
     """PCT entry existed but no offset met the confidence threshold."""
 
     _TEST_REGEX = r"^\d+ AlexLog: CDP Rel no high-conf offset"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel no high-conf offset: pcHash ([0-9a-f]+) maxCDelta (\d+) cSig (\d+)"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel no high-conf offset: pcHash ([0-9a-f]+) maxConf (\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPNoHighConfLine.dataRegex(line)
-        self.pcHash    = int(reData[1], 16)
-        self.maxCDelta = int(reData[2])
-        self.cSig      = int(reData[3])
+        self.pcHash   = int(reData[1], 16)
+        self.maxConf  = int(reData[2])
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
@@ -1267,11 +1259,8 @@ class CDPNoHighConfLine(NonRVFILine):
 
     def getDistributions(self) -> dict[str, int]:
         if self.discard: return {}
-        ratio = (self.maxCDelta * 100) // self.cSig if self.cSig > 0 else 0
         return {
-            "noHighConfMaxCDelta": self.maxCDelta,
-            "noHighConfCSig":      self.cSig,
-            "noHighConfRatio":     ratio,
+            "noHighConfMaxConf": self.maxConf,
         }
 
 
