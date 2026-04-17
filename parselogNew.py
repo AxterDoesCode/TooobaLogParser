@@ -105,8 +105,8 @@ class LogLine:
 @LogLine.createSubLineType
 class TimestampedLine(LogLine):
 
-    _TEST_REGEX = r"^\d+"
-    _DATA_REGEX = r"^(\d+)"
+    _TEST_REGEX = r"^\s*\d+"
+    _DATA_REGEX = r"^\s*(\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1084,8 +1084,8 @@ class PRqLine(NonRVFILine):
 class CDPCandidateLine(NonRVFILine):
     """Candidate pointer identified in incoming cache line (deqCacheLines rule)."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel candidate vaddr"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel candidate vaddr relOffset: ([+-]?\d+) pcHash: ([0-9a-f]+) candVaddr: ([0-9a-f]+) crossPage: ([01])"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel candidate vaddr"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel candidate vaddr relOffset:\s*([+-]?\d+) pcHash: ([0-9a-f]+) candVaddr: ([0-9a-f]+) crossPage: ([01])"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1112,8 +1112,8 @@ class CDPCandidateLine(NonRVFILine):
 class CDPTrainingHitLine(NonRVFILine):
     """Training table hit: miss vaddr was previously seen as a pointer."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel Training hit"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel Training hit: missVaddr ([0-9a-f]+) seen before by pcHash ([0-9a-f]+) at relOffset ([+-]?\d+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel Training hit"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel Training hit: missVaddr ([0-9a-f]+) seen before by pcHash ([0-9a-f]+) at relOffset\s*([+-]?\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1136,8 +1136,8 @@ class CDPTrainingHitLine(NonRVFILine):
 class CDPTtWriteLine(NonRVFILine):
     """Training table write: new entry or overwrite of existing entry."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel (Wrote|Overwrote) to training table"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel (Wrote|Overwrote) to training table, idx: \d+ candVaddr: ([0-9a-f]+)(?:.*relOffset: ([+-]?\d+))"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel (Wrote|Overwrote) to training table"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel (Wrote|Overwrote) to training table, idx:\s*\d+ candVaddr: ([0-9a-f]+)(?:.*relOffset:\s*([+-]?\d+))"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1164,8 +1164,8 @@ class CDPTtWriteLine(NonRVFILine):
 class CDPPcTableCollisionLine(NonRVFILine):
     """PC table collision: different PC evicted existing entry at the same index."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel PC table collision"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table collision at idx: \d+ evicted pcHash: ([0-9a-f]+) new pcHash: ([0-9a-f]+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel PC table collision"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel PC table collision at idx:\s*\d+ evicted pcHash: ([0-9a-f]+) new pcHash: ([0-9a-f]+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1183,8 +1183,8 @@ class CDPPcTableCollisionLine(NonRVFILine):
 class CDPPcTableUpdateLine(NonRVFILine):
     """PC table confidence updated after a training hit."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel PC table updated"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table updated, idx: \d+ pcHash: ([0-9a-f]+) relOffset: ([+-]?\d+) conf: (\d+) -> (\d+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel PC table updated"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel PC table updated, idx:\s*\d+ pcHash: ([0-9a-f]+) relOffset:\s*([+-]?\d+) conf:\s*(\d+) ->\s*(\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1211,8 +1211,8 @@ class CDPPcTableUpdateLine(NonRVFILine):
 class CDPPrefetchDecisionLine(NonRVFILine):
     """Prefetch issued: high-confidence offset selected from PCT entry."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel prefetch decision"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset ([+-]?\d+) conf (\d+) isNeighbour ([01])"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel prefetch decision"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset\s*([+-]?\d+) conf\s*(\d+) isNeighbour ([01])"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1243,8 +1243,8 @@ class CDPPrefetchDecisionLine(NonRVFILine):
 class CDPNoHighConfLine(NonRVFILine):
     """PCT entry existed but no offset met the confidence threshold."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel no high-conf offset"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel no high-conf offset: pcHash ([0-9a-f]+) maxConf (\d+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel no high-conf offset"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel no high-conf offset: pcHash ([0-9a-f]+) maxConf\s*(\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1268,8 +1268,8 @@ class CDPNoHighConfLine(NonRVFILine):
 class CDPTlbExceptionLine(NonRVFILine):
     """TLB translation failed for a prefetch candidate."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel TLB resp: exception"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel TLB resp: exception for vaddr ([0-9a-f]+), dropping prefetch"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel TLB resp: exception"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel TLB resp: exception for vaddr ([0-9a-f]+), dropping prefetch"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1286,8 +1286,8 @@ class CDPTlbExceptionLine(NonRVFILine):
 class CDPFilterHitLine(NonRVFILine):
     """Prefetch dedup filter blocked a duplicate prefetch."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel filter HIT"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel filter HIT: dropped duplicate prefetch for lineAddr ([0-9a-f]+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel filter HIT"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel filter HIT: dropped duplicate prefetch for lineAddr ([0-9a-f]+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1304,8 +1304,8 @@ class CDPFilterHitLine(NonRVFILine):
 class CDPFilterMissLine(NonRVFILine):
     """Prefetch dedup filter passed: new prefetch issued to memory."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel filter MISS"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel filter MISS: issuing prefetch for lineAddr ([0-9a-f]+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel filter MISS"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel filter MISS: issuing prefetch for lineAddr ([0-9a-f]+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1322,8 +1322,8 @@ class CDPFilterMissLine(NonRVFILine):
 class CDPUsefulPrefetchLine(NonRVFILine):
     """Demand hit on a previously prefetched line (cUseful increment)."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel useful prefetch hit"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel useful prefetch hit addr ([0-9a-f]+) cUseful (\d+)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel useful prefetch hit"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel useful prefetch hit addr ([0-9a-f]+) cUseful\s*(\d+)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
@@ -1341,8 +1341,8 @@ class CDPUsefulPrefetchLine(NonRVFILine):
 class CDPNeighbourChainLine(NonRVFILine):
     """Neighbour-line prefetch returned: attempt to chain a pointer prefetch."""
 
-    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel neighbour chain"
-    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel neighbour chain: word \d+ (?:candidate )?vaddr ([0-9a-f]+) (queued for TLB|failed VPN check, dropping)"
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel neighbour chain"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel neighbour chain: word\s*\d+ (?:candidate )?vaddr ([0-9a-f]+) (queued for TLB|failed VPN check, dropping)"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
