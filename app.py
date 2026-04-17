@@ -34,16 +34,16 @@ def try_load_json_cache(logfile: str) -> dict | None:
             data = json.load(f)
         if data.get("mtime") != log_mtime:
             return None
-        return data["totals"]
+        return {"totals": data["totals"], "finalCycle": data.get("finalCycle")}
     except (OSError, KeyError, json.JSONDecodeError):
         return None
 
 
-def save_json_cache(logfile: str, totals: dict) -> None:
+def save_json_cache(logfile: str, totals: dict, finalCycle: int | None) -> None:
     cache_path = get_json_cache_path(logfile)
     log_mtime = os.path.getmtime(logfile)
     with open(cache_path, "w") as f:
-        json.dump({"mtime": log_mtime, "totals": totals}, f)
+        json.dump({"mtime": log_mtime, "totals": totals, "finalCycle": finalCycle}, f)
 
 
 @app.route("/")
@@ -127,7 +127,7 @@ def _run_parse_folder(job_id: str, folder: str) -> None:
                 silent=True,
             )
             totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
-            save_json_cache(fpath, totals)
+            save_json_cache(fpath, totals, lp.finalCycle)
             update({"file": fname, "path": fpath, "status": "ok"})
         except Exception as e:
             update({"file": fname, "path": fpath, "status": "error", "error": str(e)})
@@ -179,7 +179,7 @@ def process_log():
 
     cached = try_load_json_cache(logfile)
     if cached is not None:
-        return jsonify({"totals": cached, "cached": True})
+        return jsonify({"totals": cached["totals"], "finalCycle": cached["finalCycle"], "cached": True})
 
     try:
         lp = LogParser(
@@ -194,8 +194,8 @@ def process_log():
         return jsonify({"error": str(e)}), 500
 
     totals = {lt.__name__: stats for lt, stats in lp.totals.items()}
-    save_json_cache(logfile, totals)
-    return jsonify({"totals": totals, "cached": False})
+    save_json_cache(logfile, totals, lp.finalCycle)
+    return jsonify({"totals": totals, "finalCycle": lp.finalCycle, "cached": False})
 
 
 if __name__ == "__main__":

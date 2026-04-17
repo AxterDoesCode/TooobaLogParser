@@ -273,6 +273,7 @@
     .log-header { display: flex; flex-direction: column; gap: 2px; }
     .log-header .log-name { color: var(--accent); font-weight: 600; font-size: 12px; }
     .log-header .log-dir  { color: var(--muted); font-size: 10px; }
+    .log-header .log-cycle { color: var(--yellow); font-size: 10px; font-variant-numeric: tabular-nums; }
 
     .th-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
     .remove-btn {
@@ -535,6 +536,7 @@ async function addLog(path) {
     name: basename(path),
     dir:  basename(dirname(path)),
     totals: data.totals,
+    finalCycle: data.finalCycle ?? null,
     cached: data.cached,
   });
 
@@ -576,11 +578,15 @@ function renderTable() {
   logs.forEach(log => {
     const th = document.createElement("th");
     th.className = "log-col";
+    const finalCycleStr = log.finalCycle != null
+      ? `<span class="log-cycle">cycles: ${fmtNum(log.finalCycle)}</span>`
+      : "";
     th.innerHTML = `
       <div class="th-inner">
         <div class="log-header">
           <span class="log-name">${escHtml(log.name)}</span>
           <span class="log-dir">${escHtml(log.dir)}</span>
+          ${finalCycleStr}
         </div>
         <button class="remove-btn" data-path="${escAttr(log.path)}" title="Remove">✕</button>
       </div>`;

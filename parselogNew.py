@@ -265,6 +265,8 @@ class CRqCreationLine(NonRVFILine):
         self.disruptionCycles = None
         # Fraction access to this capability to report in distributions
         self.accessFraction = None
+        # Set by CDPFilterMissLine.postProcess when this prefetch is linked to a CDP filter-miss
+        self.cdpLinked = False
 
     def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
         super().postProcess(before, after)
@@ -1087,6 +1089,11 @@ class CDPCandidateLine(NonRVFILine):
     _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel candidate vaddr"
     _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel candidate vaddr relOffset:\s*([+-]?\d+) pcHash: ([0-9a-f]+) candVaddr: ([0-9a-f]+) crossPage: ([01])"
 
+    # candVaddr -> (timestamp_or_None, crossPage). timestamp is consumed on first
+    # matching training hit (for the lag metric) and set to None; crossPage persists
+    # for subsequent training hits on the same vaddr.
+    VADDR_LOOKOUT: dict[int, tuple[int | None, bool]] = {}
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPCandidateLine.dataRegex(line)
@@ -1094,6 +1101,12 @@ class CDPCandidateLine(NonRVFILine):
         self.pcHash     = int(reData[2], 16)
         self.candVaddr  = int(reData[3], 16)
         self.crossPage  = reData[4] == "1"
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+        # Refresh timestamp even if this vaddr was seen before — gives lag-since-most-recent.
+        CDPCandidateLine.VADDR_LOOKOUT[self.candVaddr] = (self.timestamp, self.crossPage)
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
@@ -1115,21 +1128,70 @@ class CDPTrainingHitLine(NonRVFILine):
     _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel Training hit"
     _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel Training hit: missVaddr ([0-9a-f]+) seen before by pcHash ([0-9a-f]+) at relOffset\s*([+-]?\d+)"
 
+    # Max cycles to search forward for a matching decision/no-high-conf with the same pcHash
+    MAX_TT_TO_DECISION_CYCLES = 100
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPTrainingHitLine.dataRegex(line)
         self.missVaddr  = int(reData[1], 16)
         self.pcHash     = int(reData[2], 16)
         self.relOffset  = int(reData[3])
+        # Set in self.postProcess
+        self.resolution: str | None = None     # "decision" | "noHighConf" | None
+        self.candidateLag: int | None = None
+        self.originCrossPage: bool | None = None
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+
+        # Part 4: look up VADDR_LOOKOUT. Record lag only on first consumption (by
+        # clearing the ts); keep crossPage so downstream TT hits on the same vaddr
+        # can still be categorized as same-page vs cross-page.
+        entry = CDPCandidateLine.VADDR_LOOKOUT.get(self.missVaddr)
+        if entry is not None:
+            ts, crossPage = entry
+            self.originCrossPage = crossPage
+            if ts is not None:
+                self.candidateLag = self.timestamp - ts
+                CDPCandidateLine.VADDR_LOOKOUT[self.missVaddr] = (None, crossPage)
+
+        # Part 3: claim every matching-pcHash decision within the window so originCrossPage
+        # propagates to the full fan-out of decisions produced by this TT hit (inBounds +
+        # each neighbour, one per PCT high-conf offset). Stop early only on no-high-conf,
+        # which rules out any decisions from this lookup.
+        for ll in after:
+            if isinstance(ll, TimestampedLine) and ll.timestamp > self.timestamp + self.MAX_TT_TO_DECISION_CYCLES:
+                break
+            if isinstance(ll, CDPNoHighConfLine) and ll.pcHash == self.pcHash:
+                if self.resolution is None:
+                    self.resolution = "noHighConf"
+                break
+            if isinstance(ll, CDPPrefetchDecisionLine) and ll.pcHash == self.pcHash and ll.trainingHitLine is None:
+                self.resolution = "decision"
+                ll.trainingHitLine = self
+                ll.originCrossPage = self.originCrossPage
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
         if self.discard: return rt
-        return rt | {"ttTrainingHits": 1}
+        return rt | {
+            "ttTrainingHits":             1,
+            "ttHitResolvedDecision":      int(self.resolution == "decision"),
+            "ttHitResolvedNoHighConf":    int(self.resolution == "noHighConf"),
+            "ttHitUnresolved":            int(self.resolution is None),
+            "ttHitWithPriorCandidate":    int(self.candidateLag is not None),
+            "ttHitWithCrossPageOrigin":   int(self.originCrossPage is True),
+            "ttHitWithSamePageOrigin":    int(self.originCrossPage is False),
+        }
 
     def getDistributions(self) -> dict[str, int]:
         if self.discard: return {}
-        return {"trainingHitRelOffset": self.relOffset}
+        rt: dict[str, int] = {"trainingHitRelOffset": self.relOffset}
+        if self.candidateLag is not None:
+            rt["candidateToTrainingLag"] = self.candidateLag
+        return rt
 
 
 @NonRVFILine.createSubLineType
@@ -1214,6 +1276,9 @@ class CDPPrefetchDecisionLine(NonRVFILine):
     _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel prefetch decision"
     _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset\s*([+-]?\d+) conf\s*(\d+) isNeighbour ([01])"
 
+    # Max cycles to search forward for the matching CDPFilterMissLine
+    MAX_DECISION_TO_FILTER_CYCLES = 50
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPPrefetchDecisionLine.dataRegex(line)
@@ -1221,22 +1286,65 @@ class CDPPrefetchDecisionLine(NonRVFILine):
         self.relOffset   = int(reData[2])
         self.conf        = int(reData[3])
         self.isNeighbour = reData[4] == "1"
+        # Set by CDPTrainingHitLine.postProcess (Part 3)
+        self.trainingHitLine = None
+        self.originCrossPage: bool | None = None
+        # Set in self.postProcess (Part 2)
+        self.filterMissLine = None
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+
+        # Link forward to the first unclaimed CDPFilterMissLine.
+        # Stop early on a matching-lineAddr filter-HIT (dedup dropped our candidate).
+        for ll in after:
+            if isinstance(ll, TimestampedLine) and ll.timestamp > self.timestamp + self.MAX_DECISION_TO_FILTER_CYCLES:
+                break
+            if isinstance(ll, CDPFilterHitLine):
+                # Duplicate prefetch dropped; no filter-miss will follow for this decision
+                break
+            if isinstance(ll, CDPTlbExceptionLine):
+                # TLB exception dropped this prefetch before filter
+                break
+            if isinstance(ll, CDPFilterMissLine) and not ll.decisionClaimed:
+                ll.decisionClaimed = True
+                ll.originCrossPage = self.originCrossPage
+                ll.offsetCategory  = "neighbour" if self.isNeighbour else "inBounds"
+                self.filterMissLine = ll
+                break
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
         if self.discard: return rt
-        return rt | {
+        base = {
             "prefetchDecisions":          1,
             "prefetchDecisionsNeighbour": int(self.isNeighbour),
             "prefetchDecisionsInBounds":  int(not self.isNeighbour),
         }
+        fm = self.filterMissLine
+        if fm is not None and fm.cRqCreationLine is not None:
+            c = fm.cRqCreationLine
+            if c.miss:
+                verdict = "Useful" if not c.isNeverAccessed else "Useless"
+                base[f"cdp{verdict}AtConf{self.conf}"] = 1
+        return rt | base
 
     def getDistributions(self) -> dict[str, int]:
         if self.discard: return {}
-        return {
+        rt: dict[str, int] = {
             "prefetchDecisionRelOffset": self.relOffset,
             "prefetchDecisionConf":      self.conf,
         }
+        fm = self.filterMissLine
+        if fm is not None and fm.cRqCreationLine is not None:
+            c = fm.cRqCreationLine
+            if c.miss:
+                if not c.isNeverAccessed:
+                    rt["cdpConfOfUseful"]  = self.conf
+                else:
+                    rt["cdpConfOfUseless"] = self.conf
+        return rt
 
 
 @NonRVFILine.createSubLineType
@@ -1283,6 +1391,48 @@ class CDPTlbExceptionLine(NonRVFILine):
 
 
 @NonRVFILine.createSubLineType
+class CDPTlbRespLine(NonRVFILine):
+    """TLB translation success: vaddr -> paddr (lineAddr = paddr >> 6)."""
+
+    _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel TLB resp: vaddr"
+    _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel TLB resp: vaddr ([0-9a-f]+) -> paddr ([0-9a-f]+) lineAddr ([0-9a-f]+) crossPage ([01])"
+
+    # Set of lineAddrs currently known to originate from a neighbour-chain pointer.
+    # Consumed by CDPFilterMissLine.postProcess to tag chain-originated prefetches.
+    CHAIN_LINEADDR_LOOKOUT: set[int] = set()
+
+    # lineAddr -> crossPage. Populated directly from the authoritative crossPage flag
+    # emitted by the BSV TLB-resp log line; consumed by CDPFilterMissLine.
+    LINEADDR_TO_CROSSPAGE: dict[int, bool] = {}
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPTlbRespLine.dataRegex(line)
+        self.vaddr     = int(reData[1], 16)
+        self.paddr     = int(reData[2], 16)
+        self.lineAddr  = int(reData[3], 16)
+        self.crossPage = reData[4] == "1"
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+
+        # If this TLB resp is for a chain-origin vaddr, propagate to lineAddr lookout
+        if self.vaddr in CDPNeighbourChainLine.CHAIN_VADDR_LOOKOUT:
+            CDPNeighbourChainLine.CHAIN_VADDR_LOOKOUT.discard(self.vaddr)
+            CDPTlbRespLine.CHAIN_LINEADDR_LOOKOUT.add(self.lineAddr)
+
+        # Authoritative pageCategory attribution: record crossPage keyed by lineAddr
+        # for the downstream CDPFilterMissLine to consume.
+        CDPTlbRespLine.LINEADDR_TO_CROSSPAGE[self.lineAddr] = self.crossPage
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"tlbTranslations": 1}
+
+
+@NonRVFILine.createSubLineType
 class CDPFilterHitLine(NonRVFILine):
     """Prefetch dedup filter blocked a duplicate prefetch."""
 
@@ -1307,15 +1457,90 @@ class CDPFilterMissLine(NonRVFILine):
     _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel filter MISS"
     _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel filter MISS: issuing prefetch for lineAddr ([0-9a-f]+)"
 
+    # Max cycles to search forward for the matching CRqCreationLine
+    MAX_LINK_CYCLES = 200
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPFilterMissLine.dataRegex(line)
         self.lineAddr = int(reData[1], 16)
+        # Set in self.postProcess
+        self.cRqCreationLine = None
+        # Set by CDPPrefetchDecisionLine.postProcess to prevent double-claim
+        self.decisionClaimed = False
+        # Propagated from the upstream decision (Part 4.5)
+        self.originCrossPage: bool | None = None
+        self.offsetCategory: str | None = None   # "inBounds" | "neighbour"
+        # Set in self.postProcess (Part 4.5 chain tracking)
+        self.chainCategory: str = "direct"       # "direct" | "chain"
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+
+        # Chain category: was this lineAddr produced by a neighbour-chain prefetch?
+        if self.lineAddr in CDPTlbRespLine.CHAIN_LINEADDR_LOOKOUT:
+            self.chainCategory = "chain"
+            CDPTlbRespLine.CHAIN_LINEADDR_LOOKOUT.discard(self.lineAddr)
+
+        # Page category: fallback to the direct lineAddr map populated by the
+        # matching CDPTlbRespLine. Covers the common case where the decision ->
+        # filter-miss pcHash chain didn't resolve (most issued prefetches).
+        if self.originCrossPage is None:
+            crossPage = CDPTlbRespLine.LINEADDR_TO_CROSSPAGE.pop(self.lineAddr, None)
+            if crossPage is not None:
+                self.originCrossPage = crossPage
+
+        # Link forward to the CRqCreationLine the prefetch triggers
+        for ll in after:
+            if isinstance(ll, TimestampedLine) and ll.timestamp > self.timestamp + self.MAX_LINK_CYCLES:
+                break
+            if (isinstance(ll, CRqCreationLine) and ll.isPrefetch
+                    and ll.lineAddr == self.lineAddr and not ll.cdpLinked):
+                self.cRqCreationLine = ll
+                ll.cdpLinked = True
+                break
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
         if self.discard: return rt
-        return rt | {"filterPrefetchesIssued": 1}
+        base = {"filterPrefetchesIssued": 1}
+        c = self.cRqCreationLine
+        if c is None:
+            return rt | base | {"cdpPrefetchUnlinked": 1}
+
+        useful  = bool(c.miss and not c.isNeverAccessed)
+        useless = bool(c.miss and c.isNeverAccessed)
+        base |= {
+            "cdpPrefetchLinked":   1,
+            "cdpPrefetchHitL1":    int(c.hit),
+            "cdpPrefetchMissL1":   int(c.miss),
+            "cdpPrefetchOwned":    int(c.owned),
+            "cdpPrefetchUseful":   int(useful),
+            "cdpPrefetchUseless":  int(useless),
+            "cdpPrefetchLate":     int(c.isLatePrefetch),
+            "cdpPrefetchDisrupt":  int(c.miss and c.disruptedCache),
+        }
+
+        # Part 4.5: category-scoped useful/useless totals
+        verdict = "Useful" if useful else ("Useless" if useless else None)
+        if verdict:
+            page = "crossPage" if self.originCrossPage is True else (
+                   "samePage"  if self.originCrossPage is False else "unknownPage")
+            off  = self.offsetCategory or "unknownOffset"
+            ch   = self.chainCategory
+            base[f"cdpPref_{page}_{verdict}"]             = 1
+            base[f"cdpPref_{off}_{verdict}"]              = 1
+            base[f"cdpPref_{ch}_{verdict}"]               = 1
+            base[f"cdpPref_{page}_{off}_{ch}_{verdict}"]  = 1
+        return rt | base
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        c = self.cRqCreationLine
+        if c is not None and c.prefetchLeadTime is not None:
+            return {"cdpPrefetchLeadTime": c.prefetchLeadTime}
+        return {}
 
 
 @NonRVFILine.createSubLineType
@@ -1344,11 +1569,21 @@ class CDPNeighbourChainLine(NonRVFILine):
     _TEST_REGEX = r"^\s*\d+ AlexLog: CDP Rel neighbour chain"
     _DATA_REGEX = r"^\s*(\d+) AlexLog: CDP Rel neighbour chain: word\s*\d+ (?:candidate )?vaddr ([0-9a-f]+) (queued for TLB|failed VPN check, dropping)"
 
+    # Set of vaddrs queued from a neighbour-chain pointer-chase.
+    # Consumed by CDPTlbRespLine.postProcess to propagate to CHAIN_LINEADDR_LOOKOUT.
+    CHAIN_VADDR_LOOKOUT: set[int] = set()
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPNeighbourChainLine.dataRegex(line)
         self.vaddr     = int(reData[1], 16)
         self.vpnFailed = "failed" in reData[2]
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+        if not self.vpnFailed:
+            CDPNeighbourChainLine.CHAIN_VADDR_LOOKOUT.add(self.vaddr)
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
@@ -1482,6 +1717,13 @@ class LogParser:
         # Calculate totals and dists
         self.recalculateTotalsAndDists(silent)
 
+        # Final simulation cycle (last TimestampedLine.timestamp)
+        self.finalCycle: int | None = None
+        for ll in reversed(self.logLines):
+            if isinstance(ll, TimestampedLine):
+                self.finalCycle = ll.timestamp
+                break
+
 
 
     def recalculateTotalsAndDists(self, silent: bool = False):
@@ -1508,6 +1750,8 @@ class LogParser:
         
 
     def printTotals(self) -> None:
+        if self.finalCycle is not None:
+            print(f"Final cycle: {self.finalCycle}\n")
         for LineType, totals in self.totals.items():
             if len(totals) != 0:
                 print(f"{LineType.__name__} totals:")
