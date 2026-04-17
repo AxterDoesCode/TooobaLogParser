@@ -1075,6 +1075,301 @@ class PRqLine(NonRVFILine):
         if self.reqCs == "I" and self.lineAddr in CRqHitLine.PREFETCH_LOOKOUTS:
             CRqHitLine.PREFETCH_LOOKOUTS.pop(self.lineAddr)
 
+# ============================================================================
+# CDP Prefetcher log line parsers
+# All correspond to $display lines in mkCDPStatefulRelative (CDP.bsv)
+# ============================================================================
+
+@NonRVFILine.createSubLineType
+class CDPCandidateLine(NonRVFILine):
+    """Candidate pointer identified in incoming cache line (deqCacheLines rule)."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel candidate vaddr"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel candidate vaddr relOffset: ([+-]?\d+) pcHash: ([0-9a-f]+) candVaddr: ([0-9a-f]+) crossPage: ([01])"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPCandidateLine.dataRegex(line)
+        self.relOffset  = int(reData[1])
+        self.pcHash     = int(reData[2], 16)
+        self.candVaddr  = int(reData[3], 16)
+        self.crossPage  = reData[4] == "1"
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {
+            "candidatesFound": 1,
+            "crossPageCandidates": int(self.crossPage),
+        }
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        return {"candidateRelOffset": self.relOffset}
+
+
+@NonRVFILine.createSubLineType
+class CDPTrainingHitLine(NonRVFILine):
+    """Training table hit: miss vaddr was previously seen as a pointer."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel Training hit"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel Training hit: missVaddr ([0-9a-f]+) seen before by pcHash ([0-9a-f]+) at relOffset ([+-]?\d+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPTrainingHitLine.dataRegex(line)
+        self.missVaddr  = int(reData[1], 16)
+        self.pcHash     = int(reData[2], 16)
+        self.relOffset  = int(reData[3])
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"ttTrainingHits": 1}
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        return {"trainingHitRelOffset": self.relOffset}
+
+
+@NonRVFILine.createSubLineType
+class CDPTtWriteLine(NonRVFILine):
+    """Training table write: new entry or overwrite of existing entry."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel (Wrote|Overwrote) to training table"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel (Wrote|Overwrote) to training table, idx: \d+ candVaddr: ([0-9a-f]+)(?:.*relOffset: ([+-]?\d+))"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPTtWriteLine.dataRegex(line)
+        self.isOverwrite = reData[1] == "Overwrote"
+        self.candVaddr   = int(reData[2], 16)
+        self.relOffset   = int(reData[3]) if reData[3] is not None else 0
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {
+            "ttWrites":     1,
+            "ttOverwrites": int(self.isOverwrite),
+            "ttNewEntries": int(not self.isOverwrite),
+        }
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        return {"ttWriteRelOffset": self.relOffset}
+
+
+@NonRVFILine.createSubLineType
+class CDPPcTableCollisionLine(NonRVFILine):
+    """PC table collision: different PC evicted existing entry at the same index."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel PC table collision"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table collision at idx: \d+ evicted pcHash: ([0-9a-f]+) new pcHash: ([0-9a-f]+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPPcTableCollisionLine.dataRegex(line)
+        self.evictedPcHash = int(reData[1], 16)
+        self.newPcHash     = int(reData[2], 16)
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"pctCollisions": 1}
+
+
+@NonRVFILine.createSubLineType
+class CDPPcTableUpdateLine(NonRVFILine):
+    """PC table confidence updated after a training hit."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel PC table updated"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel PC table updated, idx: \d+ pcHash: ([0-9a-f]+) relOffset: ([+-]?\d+) cDelta: (\d+) -> (\d+) cSig: (\d+) -> (\d+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPPcTableUpdateLine.dataRegex(line)
+        self.pcHash      = int(reData[1], 16)
+        self.relOffset   = int(reData[2])
+        self.oldCDelta   = int(reData[3])
+        self.newCDelta   = int(reData[4])
+        self.oldCSig     = int(reData[5])
+        self.newCSig     = int(reData[6])
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"pctUpdates": 1}
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        return {
+            "pctUpdateRelOffset": self.relOffset,
+            "pctNewCSig":         self.newCSig,
+            "pctNewCDelta":       self.newCDelta,
+        }
+
+
+@NonRVFILine.createSubLineType
+class CDPPrefetchDecisionLine(NonRVFILine):
+    """Prefetch issued: high-confidence offset selected from PCT entry."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel prefetch decision"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel prefetch decision: pcHash ([0-9a-f]+) relOffset ([+-]?\d+) cDelta (\d+) cSig (\d+) isNeighbour ([01])"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPPrefetchDecisionLine.dataRegex(line)
+        self.pcHash      = int(reData[1], 16)
+        self.relOffset   = int(reData[2])
+        self.cDelta      = int(reData[3])
+        self.cSig        = int(reData[4])
+        self.isNeighbour = reData[5] == "1"
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {
+            "prefetchDecisions":          1,
+            "prefetchDecisionsNeighbour": int(self.isNeighbour),
+            "prefetchDecisionsInBounds":  int(not self.isNeighbour),
+        }
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        ratio = (self.cDelta * 100) // self.cSig if self.cSig > 0 else 0
+        return {
+            "prefetchDecisionRelOffset":        self.relOffset,
+            "prefetchDecisionCDelta":           self.cDelta,
+            "prefetchDecisionCSig":             self.cSig,
+            "prefetchDecisionConfidenceRatio":  ratio,
+        }
+
+
+@NonRVFILine.createSubLineType
+class CDPNoHighConfLine(NonRVFILine):
+    """PCT entry existed but no offset met the confidence threshold."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel no high-conf offset"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel no high-conf offset: pcHash ([0-9a-f]+) maxCDelta (\d+) cSig (\d+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPNoHighConfLine.dataRegex(line)
+        self.pcHash    = int(reData[1], 16)
+        self.maxCDelta = int(reData[2])
+        self.cSig      = int(reData[3])
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"pctLookupNoHighConf": 1}
+
+    def getDistributions(self) -> dict[str, int]:
+        if self.discard: return {}
+        ratio = (self.maxCDelta * 100) // self.cSig if self.cSig > 0 else 0
+        return {
+            "noHighConfMaxCDelta": self.maxCDelta,
+            "noHighConfCSig":      self.cSig,
+            "noHighConfRatio":     ratio,
+        }
+
+
+@NonRVFILine.createSubLineType
+class CDPTlbExceptionLine(NonRVFILine):
+    """TLB translation failed for a prefetch candidate."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel TLB resp: exception"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel TLB resp: exception for vaddr ([0-9a-f]+), dropping prefetch"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPTlbExceptionLine.dataRegex(line)
+        self.vaddr = int(reData[1], 16)
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"tlbExceptions": 1}
+
+
+@NonRVFILine.createSubLineType
+class CDPFilterHitLine(NonRVFILine):
+    """Prefetch dedup filter blocked a duplicate prefetch."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel filter HIT"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel filter HIT: dropped duplicate prefetch for lineAddr ([0-9a-f]+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPFilterHitLine.dataRegex(line)
+        self.lineAddr = int(reData[1], 16)
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"filterDuplicatesDropped": 1}
+
+
+@NonRVFILine.createSubLineType
+class CDPFilterMissLine(NonRVFILine):
+    """Prefetch dedup filter passed: new prefetch issued to memory."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel filter MISS"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel filter MISS: issuing prefetch for lineAddr ([0-9a-f]+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPFilterMissLine.dataRegex(line)
+        self.lineAddr = int(reData[1], 16)
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"filterPrefetchesIssued": 1}
+
+
+@NonRVFILine.createSubLineType
+class CDPUsefulPrefetchLine(NonRVFILine):
+    """Demand hit on a previously prefetched line (cUseful increment)."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel useful prefetch hit"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel useful prefetch hit addr ([0-9a-f]+) cUseful (\d+)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPUsefulPrefetchLine.dataRegex(line)
+        self.addr    = int(reData[1], 16)
+        self.cUseful = int(reData[2])
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {"usefulPrefetches": 1}
+
+
+@NonRVFILine.createSubLineType
+class CDPNeighbourChainLine(NonRVFILine):
+    """Neighbour-line prefetch returned: attempt to chain a pointer prefetch."""
+
+    _TEST_REGEX = r"^\d+ AlexLog: CDP Rel neighbour chain"
+    _DATA_REGEX = r"^(\d+) AlexLog: CDP Rel neighbour chain: word \d+ (?:candidate )?vaddr ([0-9a-f]+) (queued for TLB|failed VPN check, dropping)"
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        reData = CDPNeighbourChainLine.dataRegex(line)
+        self.vaddr     = int(reData[1], 16)
+        self.vpnFailed = "failed" in reData[2]
+
+    def getTotals(self) -> dict[str, int]:
+        rt = super().getTotals()
+        if self.discard: return rt
+        return rt | {
+            "neighbourChainAttempts":  1,
+            "neighbourChainVpnFailed": int(self.vpnFailed),
+        }
+
+
 class LogParser:
 
     class openMaybeGZip:
