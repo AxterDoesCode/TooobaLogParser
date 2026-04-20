@@ -1311,6 +1311,7 @@ class CDPPrefetchDecisionLine(NonRVFILine):
                 ll.decisionClaimed = True
                 ll.originCrossPage = self.originCrossPage
                 ll.offsetCategory  = "neighbour" if self.isNeighbour else "inBounds"
+                ll.decisionLine    = self   # reverse link so useful-hit can read conf
                 self.filterMissLine = ll
                 break
 
@@ -1460,6 +1461,11 @@ class CDPFilterMissLine(NonRVFILine):
     # Max cycles to search forward for the matching CRqCreationLine
     MAX_LINK_CYCLES = 200
 
+    # Per-lineAddr lookout: most recent filter-MISS for this lineAddr, consumed
+    # by CDPUsefulPrefetchLine to attribute the useful-hit back to the decision
+    # that spawned it (without going through the fragile CRqCreation linking).
+    LINEADDR_RECENT_FILTER_MISS: "dict[int, 'CDPFilterMissLine']" = {}
+
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = CDPFilterMissLine.dataRegex(line)
@@ -1473,6 +1479,8 @@ class CDPFilterMissLine(NonRVFILine):
         self.offsetCategory: str | None = None   # "inBounds" | "neighbour"
         # Set in self.postProcess (Part 4.5 chain tracking)
         self.chainCategory: str = "direct"       # "direct" | "chain"
+        # Reverse link to decision (set by CDPPrefetchDecisionLine.postProcess)
+        self.decisionLine: "CDPPrefetchDecisionLine | None" = None
 
     def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
         super().postProcess(before, after)
@@ -1490,6 +1498,11 @@ class CDPFilterMissLine(NonRVFILine):
             crossPage = CDPTlbRespLine.LINEADDR_TO_CROSSPAGE.pop(self.lineAddr, None)
             if crossPage is not None:
                 self.originCrossPage = crossPage
+
+        # Register as the most-recent filter MISS for this lineAddr, so a later
+        # CDPUsefulPrefetchLine can attribute its useful-hit back to the
+        # decision's confidence. This bypasses the fragile cRq-creation linking.
+        CDPFilterMissLine.LINEADDR_RECENT_FILTER_MISS[self.lineAddr] = self
 
         # Link forward to the CRqCreationLine the prefetch triggers
         for ll in after:
@@ -1554,12 +1567,38 @@ class CDPUsefulPrefetchLine(NonRVFILine):
         super().__init__(line)
         reData = CDPUsefulPrefetchLine.dataRegex(line)
         self.addr    = int(reData[1], 16)
+        self.lineAddr = self.addr >> 6
         self.cUseful = int(reData[2])
+        # Set in postProcess if we can trace the useful hit back to the decision
+        # that issued the matching prefetch.
+        self.decisionLine: "CDPPrefetchDecisionLine | None" = None
+
+    def postProcess(self, before: Iterable[LogLine], after: Iterable[LogLine]) -> None:
+        super().postProcess(before, after)
+        if self.discard: return
+        # Look up the most-recent filter MISS for this lineAddr and follow its
+        # reverse link back to the decision. Pop the entry so a later useful-hit
+        # on a re-prefetched line doesn't double-attribute. This gives direct
+        # per-conf accuracy WITHOUT the fragile cRq-creation linking chain.
+        fm = CDPFilterMissLine.LINEADDR_RECENT_FILTER_MISS.pop(self.lineAddr, None)
+        if fm is not None and fm.decisionLine is not None:
+            self.decisionLine = fm.decisionLine
 
     def getTotals(self) -> dict[str, int]:
         rt = super().getTotals()
         if self.discard: return rt
-        return rt | {"usefulPrefetches": 1}
+        base = {"usefulPrefetches": 1}
+        # Per-confidence accounting via the direct decision link. This lives
+        # alongside CDPPrefetchDecisionLine.cdp{Useful,Useless}AtConfN; the
+        # "Direct" suffix signals it's computed from the useful-hit emit rather
+        # than the cRq-creation linking chain (more robust — see plan.md).
+        if self.decisionLine is not None:
+            base[f"usefulPrefetchesAtConf{self.decisionLine.conf}_Direct"] = 1
+            base[f"usefulPrefetchesNeighbour_Direct"] = int(self.decisionLine.isNeighbour)
+            base[f"usefulPrefetchesInBounds_Direct"]  = int(not self.decisionLine.isNeighbour)
+        else:
+            base["usefulPrefetchesUnattributed_Direct"] = 1
+        return rt | base
 
 
 @NonRVFILine.createSubLineType
