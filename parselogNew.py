@@ -260,6 +260,10 @@ class CRqCreationLine(NonRVFILine):
         # This attribute is set by CRqMissLine for an evicted, unused prefetch
         self.isNeverAccessed = False
         self.isNeverAccessedBecausePerms = False
+        # Set by CRqMissLine when a demand Load's permsOnly miss (S→E upgrade)
+        # consumed this prefetched line. The prefetch was useful, but the demand
+        # paid an LLC upgrade roundtrip rather than hitting directly.
+        self.consumedViaPermsOnly = False
         # Set by the eventual CRqHitLine
         self.disruptedCache   = False
         self.disruptionCycles = None
@@ -399,6 +403,8 @@ class CRqCreationLine(NonRVFILine):
             "lateUsefulPrefetch"   : int(self.isLatePrefetch and self.miss and not self.isNeverAccessed), 
             "prefUnderPref"   : int(self.isPrefetchUnderPrefetch),
             "usefulPrefetch"  : int(self.isPrefetch and self.miss and not self.isNeverAccessed),
+            "usefulPrefetchPermsOnly" : int(self.isPrefetch and self.miss and not self.isNeverAccessed and self.consumedViaPermsOnly),
+            "usefulPrefetchDirectHit" : int(self.isPrefetch and self.miss and not self.isNeverAccessed and not self.consumedViaPermsOnly),
             "uselessPrefetch" : int(self.isPrefetch and self.miss and self.isNeverAccessed),
             "uselessPrefetchBecausePerms" : int(self.isPrefetch and self.miss and self.isNeverAccessed and self.isNeverAccessedBecausePerms),
             "uselessPrefetchDisruption"   : int(self.isPrefetch and self.miss and self.isNeverAccessed and self.disruptedCache),
@@ -433,7 +439,10 @@ class CRqCreationLine(NonRVFILine):
 class LLCRqCreationLine(NonRVFILine):
     
     _TEST_REGEX = r"^\d+ LL cRq creation"
-    _DATA_REGEX = r"^\d+ LL cRq creation: mshr: \s*(\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+), mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), wasQueued: ([01]), reqCs: ([ITSEM])"
+    # LLBank.bsv:471 emits this line with NO space after the vpn's comma
+    # ("0x%h,mshrInUse"). Other call-sites (lines 420, 515) include the space.
+    # Accept both with `,\s*`.
+    _DATA_REGEX = r"^\d+ LL cRq creation: mshr: \s*(\d+), addr: (0x[0-9a-f]+), vpn: (0x[0-9a-f]+),\s*mshrInUse: \s*(\d+)/\s*(\d+), isPrefetch: ([01]), wasQueued: ([01]), reqCs: ([ITSEM])"
     
     # Max cycles to search for a cache hit
     MAX_HIT_CYCLES = 500
@@ -826,11 +835,23 @@ class CRqMissLine(NonRVFILine):
         # Check in the eviction lookouts of CRqHitLine
         if self.oldLineAddr in CRqHitLine.EVICTION_LOOKOUTS:
             for ll in CRqHitLine.EVICTION_LOOKOUTS[self.oldLineAddr]:
-                # Maybe tell the creation log line that it was never accessed
-                # Note that wasPrefetch is unset when the line is accessed
-                if self.wasPrefetch and ll.cRqCreationLine is not None and not ll.cRqCreationLine.isNeverAccessed:
+                # A permsOnly miss (oldLineAddr == newLineAddr, ramCs != I) is a
+                # coherence-state upgrade, NOT an eviction. The cached data is
+                # preserved; the pending demand eventually consumes it via the
+                # pRs refill (L1Bank.bsv:692 fires the useful-hit log). So a
+                # prefetch whose line sits through a permsOnly miss and is
+                # then consumed by the upgrading demand IS useful, not perms-
+                # killed. Only mark isNeverAccessed on real evictions (where
+                # the line is actually displaced).
+                if (self.wasPrefetch and ll.cRqCreationLine is not None
+                        and not ll.cRqCreationLine.isNeverAccessed
+                        and not self.permsOnly):
                     ll.cRqCreationLine.isNeverAccessed = True
-                    ll.cRqCreationLine.isNeverAccessedBecausePerms |= self.permsOnly
+                # Tag the prefetch as consumed-via-permsOnly for separate accounting
+                # of "useful, but paid an LLC upgrade roundtrip" events.
+                if (self.wasPrefetch and ll.cRqCreationLine is not None
+                        and self.permsOnly and not self.cRqIsPrefetch):
+                    ll.cRqCreationLine.consumedViaPermsOnly = True
                 if not self.permsOnly:
                     ll.evictionLine = self
             # The miss could actually be a permissions upgrade: don't count this as eviction
@@ -1003,18 +1024,23 @@ class CRqDependencyLine(NonRVFILine):
 class LLCRqDependencyLine(NonRVFILine):
 
     _TEST_REGEX = r"^\d+ LL cRq dependency"
-    _DATA_REGEX = r"^\d+ LL cRq dependency \((rep|addr) succ\): mshr: \s*(\d+), depMshr: \s*(\d+), addr: (0x[0-9a-f]+), cRq is prefetch: ([01]), other is prefetch: ([01]), reqCs: ([ITSEM])"
+    # Accepts two format variants emitted by LLBank.bsv:
+    #   (A) "LL cRq dependency (rep|addr succ): mshr: ..., other is prefetch: ..."
+    #   (B) "LL cRq dependency: mshr: ..." (no succ type, no "other is prefetch")
+    # The (B) form is emitted at LLBank.bsv:1488 and :1561.
+    _DATA_REGEX = r"^\d+ LL cRq dependency(?: \((rep|addr) succ\))?: mshr: \s*(\d+), depMshr: \s*(\d+), addr: (0x[0-9a-f]+), cRq is prefetch: ([01])(?:, other is prefetch: ([01]))?, reqCs: ([ITSEM])"
 
     def __init__(self, line: str) -> None:
         super().__init__(line)
         reData = LLCRqDependencyLine.dataRegex(line)
-        self.addrSucc        = bool(reData[0] == "addr")
+        succ_type = reData[0]  # None if variant B
+        self.addrSucc        = bool(succ_type == "addr") if succ_type else False
         self.mshr            = int(reData[1])
         self.depMshr         = int(reData[2])
         self.addr            = int(reData[3], 0)
         self.lineAddr        = self.addr >> 6
         self.cRqIsPrefetch   = bool(reData[4] == "1")
-        self.ownerIsPrefetch = bool(reData[5] == "1")
+        self.ownerIsPrefetch = bool(reData[5] == "1") if reData[5] else False
         self.reqCs           = str(reData[6])
         # Will be set by a prior LLCRqCreationLine
         self.cRqCreationLine = None
